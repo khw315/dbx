@@ -84,6 +84,7 @@ pub fn static_effort_capability(config: &AiConfig, model_id: &str) -> Option<AiE
         AiProvider::AnthropicCompatible | AiProvider::OpenaiCompatible | AiProvider::Custom => {
             Some(AiEffortCapability::FreeText { placeholder: None, source: AiCapabilitySource::Custom })
         }
+        AiProvider::GitHubCopilot => openai_capability(&model, source),
         AiProvider::Claude
         | AiProvider::CodexCli
         | AiProvider::ClaudeCodeCli
@@ -92,7 +93,8 @@ pub fn static_effort_capability(config: &AiConfig, model_id: &str) -> Option<AiE
         | AiProvider::CursorCli
         | AiProvider::GrokCli
         | AiProvider::CodeBuddyCli
-        | AiProvider::QoderCli => None,
+        | AiProvider::QoderCli
+        | AiProvider::CopilotCli => None,
     }
 }
 
@@ -221,6 +223,8 @@ pub fn registry_source_url(provider: &AiProvider) -> Option<&'static str> {
         | AiProvider::GrokCli
         | AiProvider::CodeBuddyCli
         | AiProvider::QoderCli
+        | AiProvider::CopilotCli
+        | AiProvider::GitHubCopilot
         | AiProvider::Custom => None,
     }
 }
@@ -244,6 +248,7 @@ pub fn validate_runtime_effort(config: &AiConfig) -> Result<(), String> {
             | AiProvider::GrokCli
             | AiProvider::CodeBuddyCli
             | AiProvider::QoderCli
+            | AiProvider::CopilotCli
     ) {
         return match selection {
             AiEffortSelection::Enum(value) if !value.trim().is_empty() => Ok(()),
@@ -289,7 +294,9 @@ pub fn apply_runtime_effort(body: &mut Value, config: &AiConfig) {
         AiProvider::Qwen => apply_qwen_effort(object, selection),
         AiProvider::Zhipu | AiProvider::Ollama => apply_openai_effort(object, &config.api_style, selection),
         AiProvider::MiniMax => apply_minimax_effort(object, selection),
-        AiProvider::Openai | AiProvider::OpenaiCompatible => apply_openai_effort(object, &config.api_style, selection),
+        AiProvider::Openai | AiProvider::GitHubCopilot | AiProvider::OpenaiCompatible => {
+            apply_openai_effort(object, &config.api_style, selection)
+        }
         AiProvider::Custom => {
             if config.api_style == AiApiStyle::AnthropicMessages {
                 apply_claude_effort(object, selection);
@@ -304,7 +311,8 @@ pub fn apply_runtime_effort(body: &mut Value, config: &AiConfig) {
         | AiProvider::CursorCli
         | AiProvider::GrokCli
         | AiProvider::CodeBuddyCli
-        | AiProvider::QoderCli => {}
+        | AiProvider::QoderCli
+        | AiProvider::CopilotCli => {}
     }
 }
 

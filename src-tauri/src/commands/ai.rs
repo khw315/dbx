@@ -477,6 +477,7 @@ fn resolve_cli_provider_config(mut config: AiConfig) -> AiConfig {
         AiProvider::GrokCli => (&mut config.grok_cli_path, "grok"),
         AiProvider::CodeBuddyCli => (&mut config.codebuddy_cli_path, "codebuddy"),
         AiProvider::QoderCli => (&mut config.qoder_cli_path, "qodercli"),
+        AiProvider::CopilotCli => (&mut config.copilot_cli_path, "copilot"),
         _ => return config,
     };
     let command = path_slot.as_deref().map(str::trim).filter(|path| !path.is_empty()).unwrap_or(default_command);

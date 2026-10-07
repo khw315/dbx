@@ -3283,6 +3283,8 @@ mod tests {
                 codebuddy_cli_env: Default::default(),
                 qoder_cli_path: None,
                 qoder_cli_env: Default::default(),
+                copilot_cli_path: None,
+                copilot_cli_env: Default::default(),
             },
         }
     }

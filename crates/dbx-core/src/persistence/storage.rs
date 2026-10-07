@@ -8506,6 +8506,7 @@ pub(crate) fn clear_ai_config_device_paths(config: &mut AiConfig) {
     config.grok_cli_path = None;
     config.codebuddy_cli_path = None;
     config.qoder_cli_path = None;
+    config.copilot_cli_path = None;
 }
 
 fn preserve_ai_config_device_paths(remote: &mut AiConfig, local: &AiConfig) {
@@ -8526,6 +8527,7 @@ fn preserve_ai_config_device_paths(remote: &mut AiConfig, local: &AiConfig) {
             remote.codebuddy_cli_path.clone_from(&local.codebuddy_cli_path)
         }
         (AiProvider::QoderCli, AiProvider::QoderCli) => remote.qoder_cli_path.clone_from(&local.qoder_cli_path),
+        (AiProvider::CopilotCli, AiProvider::CopilotCli) => remote.copilot_cli_path.clone_from(&local.copilot_cli_path),
         _ => {}
     }
 }
@@ -13032,6 +13034,8 @@ mod tests {
                 codebuddy_cli_env: std::collections::HashMap::new(),
                 qoder_cli_path: None,
                 qoder_cli_env: Default::default(),
+                copilot_cli_path: None,
+                copilot_cli_env: Default::default(),
             },
         }
     }

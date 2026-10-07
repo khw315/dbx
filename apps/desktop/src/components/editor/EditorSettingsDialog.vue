@@ -5483,7 +5483,7 @@ async function saveWebSqlFileUploadMaxMbSetting() {
 const aiDeleteConfirmOpen = ref(false);
 const aiDeleteConfigId = ref<string | null>(null);
 
-const CLI_AI_PROVIDERS = new Set<AiProvider>(["claude-code-cli", "codex-cli", "opencode-cli", "pi-agent-cli", "cursor-cli", "grok-cli", "codebuddy-cli", "qoder-cli"]);
+const CLI_AI_PROVIDERS = new Set<AiProvider>(["claude-code-cli", "codex-cli", "opencode-cli", "pi-agent-cli", "cursor-cli", "grok-cli", "codebuddy-cli", "qoder-cli", "copilot-cli"]);
 const OPENCODE_CONTROL_ENV = new Set(["OPENCODE_CONFIG", "OPENCODE_CONFIG_CONTENT", "OPENCODE_CONFIG_DIR", "OPENCODE_DB", "OPENCODE_PERMISSION", "OPENCODE_DISABLE_PROJECT_CONFIG"]);
 const CURSOR_CONTROL_ENV = new Set(["CURSOR_CONFIG_DIR", "CURSOR_DATA_DIR"]);
 const builtinAiProviderOptions = computed(() => Object.values(AI_PROVIDER_PRESETS).filter((provider) => !isWeb || !CLI_AI_PROVIDERS.has(provider.provider)));
@@ -5521,6 +5521,8 @@ const aiEditCodeBuddyCliPath = ref("");
 const aiEditCodeBuddyCliEnvRows = ref<AiEnvRow[]>([]);
 const aiEditQoderCliPath = ref("");
 const aiEditQoderCliEnvRows = ref<AiEnvRow[]>([]);
+const aiEditCopilotCliPath = ref("");
+const aiEditCopilotCliEnvRows = ref<AiEnvRow[]>([]);
 
 const aiAnthropicMessagesMode = computed(() => aiEditApiStyle.value === "anthropic-messages");
 const selectedAiProviderPreset = computed(() => getAiProviderPresetOption(aiEditProviderPresetId.value));
@@ -5559,6 +5561,7 @@ const aiIsCursorCli = computed(() => aiEditProvider.value === "cursor-cli");
 const aiIsGrokCli = computed(() => aiEditProvider.value === "grok-cli");
 const aiIsCodeBuddyCli = computed(() => aiEditProvider.value === "codebuddy-cli");
 const aiIsQoderCli = computed(() => aiEditProvider.value === "qoder-cli");
+const aiIsCopilotCli = computed(() => aiEditProvider.value === "copilot-cli");
 const aiIsCliProvider = computed(() => CLI_AI_PROVIDERS.has(aiEditProvider.value));
 
 const aiSupportsSkipTlsVerify = computed(() => aiEditProvider.value === "custom" || aiEditProvider.value === "openai-compatible" || aiEditProvider.value === "anthropic-compatible");
@@ -5571,6 +5574,7 @@ const aiCliCommandName = computed(() => {
   if (aiIsGrokCli.value) return "grok";
   if (aiIsCodeBuddyCli.value) return "codebuddy";
   if (aiIsQoderCli.value) return "qodercli";
+  if (aiIsCopilotCli.value) return "copilot";
   return "codex";
 });
 const aiCliLoginCommand = computed(() => {
@@ -5581,6 +5585,7 @@ const aiCliLoginCommand = computed(() => {
   if (aiIsGrokCli.value) return "grok login";
   if (aiIsCodeBuddyCli.value) return "codebuddy";
   if (aiIsQoderCli.value) return "qodercli login";
+  if (aiIsCopilotCli.value) return "copilot auth";
   return "codex login";
 });
 const aiEditCliPath = computed({
@@ -5592,6 +5597,7 @@ const aiEditCliPath = computed({
     if (aiIsGrokCli.value) return aiEditGrokCliPath.value;
     if (aiIsCodeBuddyCli.value) return aiEditCodeBuddyCliPath.value;
     if (aiIsQoderCli.value) return aiEditQoderCliPath.value;
+    if (aiIsCopilotCli.value) return aiEditCopilotCliPath.value;
     return aiEditCodexCliPath.value;
   },
   set: (value: string) => {
@@ -5609,6 +5615,8 @@ const aiEditCliPath = computed({
       aiEditCodeBuddyCliPath.value = value;
     } else if (aiIsQoderCli.value) {
       aiEditQoderCliPath.value = value;
+    } else if (aiIsCopilotCli.value) {
+      aiEditCopilotCliPath.value = value;
     } else {
       aiEditCodexCliPath.value = value;
     }
@@ -5622,6 +5630,7 @@ const aiEditCliEnvRows = computed(() => {
   if (aiIsGrokCli.value) return aiEditGrokCliEnvRows.value;
   if (aiIsCodeBuddyCli.value) return aiEditCodeBuddyCliEnvRows.value;
   if (aiIsQoderCli.value) return aiEditQoderCliEnvRows.value;
+  if (aiIsCopilotCli.value) return aiEditCopilotCliEnvRows.value;
   return aiEditCodexCliEnvRows.value;
 });
 watch(aiIsCliProvider, (isCliProvider) => {
@@ -5768,6 +5777,8 @@ function removeCliEnvRow(id: string) {
     aiEditCodeBuddyCliEnvRows.value = aiEditCodeBuddyCliEnvRows.value.filter((row) => row.id !== id);
   } else if (aiIsQoderCli.value) {
     aiEditQoderCliEnvRows.value = aiEditQoderCliEnvRows.value.filter((row) => row.id !== id);
+  } else if (aiIsCopilotCli.value) {
+    aiEditCopilotCliEnvRows.value = aiEditCopilotCliEnvRows.value.filter((row) => row.id !== id);
   } else {
     aiEditCodexCliEnvRows.value = aiEditCodexCliEnvRows.value.filter((row) => row.id !== id);
   }
@@ -5809,6 +5820,8 @@ function currentAiEditConfig() {
     codebuddyCliEnv: aiIsCodeBuddyCli.value ? cliEnvFromRows(aiEditCodeBuddyCliEnvRows.value) : {},
     qoderCliPath: aiEditQoderCliPath.value.trim() || undefined,
     qoderCliEnv: aiIsQoderCli.value ? cliEnvFromRows(aiEditQoderCliEnvRows.value) : {},
+    copilotCliPath: aiEditCopilotCliPath.value.trim() || undefined,
+    copilotCliEnv: aiIsCopilotCli.value ? cliEnvFromRows(aiEditCopilotCliEnvRows.value) : {},
   };
 }
 
@@ -5901,6 +5914,8 @@ function aiEnterEditMode(configId?: string) {
       aiEditCodeBuddyCliEnvRows.value = aiEnvRowsFromConfig(config.codebuddyCliEnv);
       aiEditQoderCliPath.value = config.qoderCliPath ?? "";
       aiEditQoderCliEnvRows.value = aiEnvRowsFromConfig(config.qoderCliEnv);
+      aiEditCopilotCliPath.value = config.copilotCliPath ?? "";
+      aiEditCopilotCliEnvRows.value = aiEnvRowsFromConfig(config.copilotCliEnv);
     }
   } else {
     aiEditConfigName.value = "";
@@ -5936,6 +5951,8 @@ function aiEnterEditMode(configId?: string) {
     aiEditCodeBuddyCliEnvRows.value = [];
     aiEditQoderCliPath.value = "";
     aiEditQoderCliEnvRows.value = [];
+    aiEditCopilotCliPath.value = "";
+    aiEditCopilotCliEnvRows.value = [];
   }
 }
 

@@ -22,7 +22,16 @@ watch([() => props.iconSlug, () => props.iconPath], () => {
 const usesWhiteDarkIcon = computed(
   () =>
     !props.iconPath &&
-    (props.provider === "claude" || props.provider === "anthropic-compatible" || props.provider === "ollama" || props.provider === "openai" || props.provider === "openai-compatible" || props.provider === "opencode-cli" || props.provider === "cursor-cli" || props.provider === "grok-cli"),
+    (props.provider === "claude" ||
+      props.provider === "anthropic-compatible" ||
+      props.provider === "ollama" ||
+      props.provider === "openai" ||
+      props.provider === "openai-compatible" ||
+      props.provider === "opencode-cli" ||
+      props.provider === "cursor-cli" ||
+      props.provider === "grok-cli" ||
+      props.provider === "github-copilot" ||
+      props.provider === "copilot-cli"),
 );
 const localIconUrl = computed(() => {
   if (props.iconPath) return webPath(props.iconPath);

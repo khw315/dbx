@@ -1025,6 +1025,10 @@ test("AI provider presets include common hosted and local providers", () => {
   assert.equal(AI_PROVIDER_PRESETS["pi-agent-cli"].model, "default");
   assert.equal(AI_PROVIDER_PRESETS["pi-agent-cli"].iconSlug, "pi");
   assert.equal(AI_PROVIDER_PRESETS["pi-agent-cli"].requiresApiKey, false);
+  assert.equal(AI_PROVIDER_PRESETS["github-copilot"].model, "gpt-4o");
+  assert.equal(AI_PROVIDER_PRESETS["github-copilot"].requiresApiKey, true);
+  assert.equal(AI_PROVIDER_PRESETS["copilot-cli"].model, "default");
+  assert.equal(AI_PROVIDER_PRESETS["copilot-cli"].requiresApiKey, false);
   assert.equal(Object.keys(AI_PROVIDER_PRESETS).indexOf("anthropic-compatible") + 1, Object.keys(AI_PROVIDER_PRESETS).indexOf("openai-compatible"));
   assert.ok(Object.keys(AI_PROVIDER_PRESETS).indexOf("qwen") < Object.keys(AI_PROVIDER_PRESETS).indexOf("minimax"));
   assert.ok(Object.keys(AI_PROVIDER_PRESETS).indexOf("minimax") < Object.keys(AI_PROVIDER_PRESETS).indexOf("ollama"));

@@ -109,6 +109,10 @@ pub enum AiProvider {
     CodeBuddyCli,
     #[serde(rename = "qoder-cli")]
     QoderCli,
+    #[serde(rename = "github-copilot")]
+    GitHubCopilot,
+    #[serde(rename = "copilot-cli")]
+    CopilotCli,
     Custom,
 }
 
@@ -133,6 +137,8 @@ impl AiProvider {
             AiProvider::GrokCli => "grok-cli",
             AiProvider::CodeBuddyCli => "codebuddy-cli",
             AiProvider::QoderCli => "qoder-cli",
+            AiProvider::GitHubCopilot => "github-copilot",
+            AiProvider::CopilotCli => "copilot-cli",
             AiProvider::CodexCli => "codex-cli",
             AiProvider::Custom => "custom",
         }
@@ -474,6 +480,10 @@ pub struct AiConfig {
     pub qoder_cli_path: Option<String>,
     #[serde(default)]
     pub qoder_cli_env: HashMap<String, String>,
+    #[serde(default)]
+    pub copilot_cli_path: Option<String>,
+    #[serde(default)]
+    pub copilot_cli_env: HashMap<String, String>,
 }
 
 fn default_enable_thinking() -> bool {
@@ -494,6 +504,7 @@ pub fn is_cli_provider(provider: &AiProvider) -> bool {
             | AiProvider::GrokCli
             | AiProvider::CodeBuddyCli
             | AiProvider::QoderCli
+            | AiProvider::CopilotCli
     )
 }
 
@@ -942,6 +953,7 @@ pub fn resolve_endpoint(config: &AiConfig) -> String {
     }
     match config.provider {
         AiProvider::Openai
+        | AiProvider::GitHubCopilot
         | AiProvider::Deepseek
         | AiProvider::Kimi
         | AiProvider::Qwen
@@ -967,6 +979,7 @@ pub fn resolve_endpoint(config: &AiConfig) -> String {
         | AiProvider::GrokCli
         | AiProvider::CodeBuddyCli
         | AiProvider::QoderCli
+        | AiProvider::CopilotCli
         | AiProvider::Gemini => unreachable!(),
     }
 }
@@ -986,6 +999,7 @@ fn uses_openai_style_api(config: &AiConfig) -> bool {
         && matches!(
             config.provider,
             AiProvider::Openai
+                | AiProvider::GitHubCopilot
                 | AiProvider::Deepseek
                 | AiProvider::Kimi
                 | AiProvider::Qwen
@@ -2225,6 +2239,7 @@ pub async fn list_models_core(config: &AiConfig) -> Result<Vec<AiModelInfo>, Str
         AiProvider::GrokCli => crate::ai_grok_cli::list_grok_models(config).await?,
         AiProvider::CodeBuddyCli => crate::ai_codebuddy_cli::list_codebuddy_models(config).await?,
         AiProvider::QoderCli => crate::ai_qoder_cli::list_qoder_models(config).await?,
+        AiProvider::CopilotCli => crate::ai_copilot_cli::list_copilot_models(config).await?,
         _ => {
             validate_model_list_config(config)?;
             let client = build_ai_http_client(config, 30)?;
@@ -2236,6 +2251,7 @@ pub async fn list_models_core(config: &AiConfig) -> Result<Vec<AiModelInfo>, Str
                     retain_ollama_completion_models(&client, config, models).await
                 }
                 AiProvider::Openai
+                | AiProvider::GitHubCopilot
                 | AiProvider::Deepseek
                 | AiProvider::Kimi
                 | AiProvider::Qwen
@@ -2256,7 +2272,8 @@ pub async fn list_models_core(config: &AiConfig) -> Result<Vec<AiModelInfo>, Str
                 | AiProvider::CursorCli
                 | AiProvider::GrokCli
                 | AiProvider::CodeBuddyCli
-                | AiProvider::QoderCli => {
+                | AiProvider::QoderCli
+                | AiProvider::CopilotCli => {
                     unreachable!()
                 }
             }
@@ -2289,7 +2306,7 @@ pub async fn resolve_model_effort_core(config: &AiConfig, model_id: &str) -> Res
         return crate::ai_qoder_cli::resolve_qoder_model_effort(config, model_id).await;
     }
 
-    if matches!(config.provider, AiProvider::CursorCli) {
+    if matches!(config.provider, AiProvider::CursorCli | AiProvider::CopilotCli) {
         return Ok(AiEffortCapability::Unsupported);
     }
 
@@ -3134,6 +3151,7 @@ async fn test_cli_provider_connection(config: &AiConfig) -> Option<Result<AiTest
         AiProvider::GrokCli => Some(crate::ai_grok_cli::test_grok_connection(config).await),
         AiProvider::CodeBuddyCli => Some(crate::ai_codebuddy_cli::test_codebuddy_connection(config).await),
         AiProvider::QoderCli => Some(crate::ai_qoder_cli::test_qoder_connection(config).await),
+        AiProvider::CopilotCli => Some(crate::ai_copilot_cli::test_copilot_connection(config).await),
         _ => None,
     }
 }
@@ -3669,10 +3687,12 @@ pub async fn complete(request: &AiCompletionRequest) -> Result<String, String> {
                 | AiProvider::CursorCli
                 | AiProvider::GrokCli
                 | AiProvider::CodeBuddyCli
-                | AiProvider::QoderCli => {
+                | AiProvider::QoderCli
+                | AiProvider::CopilotCli => {
                     unreachable!()
                 }
                 AiProvider::Openai
+                | AiProvider::GitHubCopilot
                 | AiProvider::Deepseek
                 | AiProvider::Kimi
                 | AiProvider::Qwen
@@ -3732,10 +3752,12 @@ pub async fn stream(
         | AiProvider::CursorCli
         | AiProvider::GrokCli
         | AiProvider::CodeBuddyCli
-        | AiProvider::QoderCli => {
+        | AiProvider::QoderCli
+        | AiProvider::CopilotCli => {
             unreachable!()
         }
         AiProvider::Openai
+        | AiProvider::GitHubCopilot
         | AiProvider::Deepseek
         | AiProvider::Kimi
         | AiProvider::Qwen
@@ -9337,6 +9359,7 @@ mod tests {
             AiProvider::Qwen,
             AiProvider::Ollama,
             AiProvider::MiniMax,
+            AiProvider::GitHubCopilot,
         ] {
             let mut config = test_config(provider.clone());
             config.max_retries = None;
@@ -9356,6 +9379,7 @@ mod tests {
             AiProvider::GrokCli,
             AiProvider::CodeBuddyCli,
             AiProvider::QoderCli,
+            AiProvider::CopilotCli,
         ] {
             let mut config = test_config(provider.clone());
             config.max_retries = None;

@@ -10,6 +10,8 @@ export type AiProvider =
   | "ollama"
   | "anthropic-compatible"
   | "openai-compatible"
+  | "github-copilot"
+  | "copilot-cli"
   | "claude-code-cli"
   | "pi-agent-cli"
   | "codex-cli"
@@ -83,6 +85,8 @@ export interface AiConfig {
   codebuddyCliEnv?: Record<string, string>;
   qoderCliPath?: string | null;
   qoderCliEnv?: Record<string, string>;
+  copilotCliPath?: string | null;
+  copilotCliEnv?: Record<string, string>;
   runtimeEffort?: AiEffortSelection | null;
 }
 

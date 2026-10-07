@@ -624,6 +624,7 @@ mod tests {
             AiProvider::GrokCli,
             AiProvider::CodeBuddyCli,
             AiProvider::QoderCli,
+            AiProvider::CopilotCli,
         ] {
             let config = make_config(provider);
             assert!(reject_web_unsupported_ai_provider(&config).is_err());
@@ -636,6 +637,7 @@ mod tests {
             AiProvider::Claude,
             AiProvider::AnthropicCompatible,
             AiProvider::Openai,
+            AiProvider::GitHubCopilot,
             AiProvider::OpenaiCompatible,
             AiProvider::Custom,
             AiProvider::Gemini,
