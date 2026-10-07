@@ -480,6 +480,26 @@ export const AI_PROVIDER_PRESETS: Record<AiProvider, AiProviderPreset> = {
     authMethod: "bearer",
     requiresApiKey: false,
   },
+  "github-copilot": {
+    label: "GitHub Copilot",
+    iconSlug: "githubcopilot",
+    provider: "github-copilot",
+    endpoint: "https://api.githubcopilot.com",
+    model: "gpt-4o",
+    apiStyle: "completions",
+    authMethod: "bearer",
+    requiresApiKey: true,
+  },
+  "copilot-cli": {
+    label: "GitHub Copilot CLI",
+    iconSlug: "githubcopilot",
+    provider: "copilot-cli",
+    endpoint: "",
+    model: "default",
+    apiStyle: "completions",
+    authMethod: "bearer",
+    requiresApiKey: false,
+  },
   custom: {
     label: "Custom",
     provider: "custom",
@@ -2668,7 +2688,8 @@ export const useSettingsStore = defineStore("settings", () => {
       config.provider === "cursor-cli" ||
       config.provider === "grok-cli" ||
       config.provider === "codebuddy-cli" ||
-      config.provider === "qoder-cli"
+      config.provider === "qoder-cli" ||
+      config.provider === "copilot-cli"
     )
       return true;
     return !!config.endpoint && !!activeModel.value!.modelId && (!preset.requiresApiKey || !!config.apiKey);

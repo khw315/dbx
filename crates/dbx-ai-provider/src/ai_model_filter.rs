@@ -103,6 +103,8 @@ pub(crate) fn model_is_assistant_compatible(provider: &AiProvider, model_id: &st
         | AiProvider::GrokCli
         | AiProvider::CodeBuddyCli
         | AiProvider::QoderCli
+        | AiProvider::GitHubCopilot
+        | AiProvider::CopilotCli
         | AiProvider::MiniMax
         | AiProvider::Custom => true,
     }

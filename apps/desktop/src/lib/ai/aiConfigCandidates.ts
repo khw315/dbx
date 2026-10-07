@@ -1,6 +1,6 @@
 import type { AiConfig } from "@/types/ai";
 
-const CLI_PROVIDERS = new Set<AiConfig["provider"]>(["codex-cli", "claude-code-cli", "opencode-cli", "pi-agent-cli", "cursor-cli", "grok-cli", "codebuddy-cli", "qoder-cli"]);
+const CLI_PROVIDERS = new Set<AiConfig["provider"]>(["codex-cli", "claude-code-cli", "opencode-cli", "pi-agent-cli", "cursor-cli", "grok-cli", "codebuddy-cli", "qoder-cli", "copilot-cli"]);
 
 /**
  * Mirrors `is_cli_provider` in `crates/dbx-ai-provider/src/ai.rs`.

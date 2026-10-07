@@ -252,6 +252,14 @@ async fn run_agent_loop_inner(
             );
             return crate::ai_qoder_cli::run_qoder_agent(config, &prompt, options, cancelled, on_event).await;
         }
+        if matches!(config.provider, AiProvider::CopilotCli) {
+            let prompt = crate::ai_copilot_cli::build_copilot_prompt(
+                system_prompt,
+                messages,
+                agent_ctx.sql_permissions.allow_writes,
+            );
+            return crate::ai_copilot_cli::run_copilot_agent(config, &prompt, options, cancelled, on_event).await;
+        }
         let prompt =
             crate::ai_codex_cli::build_codex_prompt(system_prompt, messages, agent_ctx.sql_permissions.allow_writes);
         let images = messages
