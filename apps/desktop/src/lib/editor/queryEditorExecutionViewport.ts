@@ -1,3 +1,5 @@
+import type { EditorView } from "@codemirror/view";
+
 export interface QueryEditorViewportRange {
   from: number;
   to: number;
@@ -62,4 +64,34 @@ export function createQueryEditorExecutionViewportOwnership() {
       cursorVisibleBeforeExecution = false;
     },
   };
+}
+
+export interface GutterExecutionCursorResult {
+  selectionOverlapsStatement: boolean;
+  cursorRelocated: boolean;
+}
+
+export function locateCursorForGutterExecution(view: EditorView, statementRange: { from: number; to: number }, locateCursorOnGutterExecute: boolean): GutterExecutionCursorResult {
+  const selection = view.state.selection.main;
+  const hasSelectedSql = !selection.empty && view.state.sliceDoc(selection.from, selection.to).trim().length > 0;
+  const selectionOverlapsStatement = hasSelectedSql && selection.from < statementRange.to && statementRange.from < selection.to;
+
+  // When an overlapping selection already exists within the statement, preserve the
+  // explicit selection rather than collapsing the cursor to statement start (the editor
+  // is still focused below).
+  let cursorRelocated = false;
+  if (locateCursorOnGutterExecute && !selectionOverlapsStatement) {
+    view.dispatch({
+      selection: { anchor: statementRange.from, head: statementRange.from },
+      scrollIntoView: false,
+      userEvent: "select.pointer",
+    });
+    cursorRelocated = true;
+  }
+
+  if (locateCursorOnGutterExecute) {
+    view.focus();
+  }
+
+  return { selectionOverlapsStatement, cursorRelocated };
 }

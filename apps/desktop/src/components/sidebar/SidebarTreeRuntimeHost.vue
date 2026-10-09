@@ -11,6 +11,7 @@ import { useSidebarDatabaseSpecificMutationRuntime } from "@/composables/useSide
 import { useSidebarTableMutationRuntime } from "@/composables/useSidebarTableMutationRuntime";
 import { useSidebarTreeExportRuntime } from "@/composables/useSidebarTreeExportRuntime";
 import { useSidebarTreeToolRuntime } from "@/composables/useSidebarTreeToolRuntime";
+import { canDropDatabaseNode, notifyDatabaseBrowserMutation } from "@/lib/database/databaseBrowserActions";
 import { canDropDatabaseTables, canEmptyDatabaseTables, useDatabaseTableEmpty } from "@/composables/useDatabaseTableEmpty";
 import { useI18n } from "vue-i18n";
 import { translateBackendError } from "@/i18n/backend-errors";
@@ -124,7 +125,6 @@ import {
   canEditDatabaseProperties as canEditDatabasePropertiesForNode,
   connectionNamespaceCreationTarget,
   editableDatabasePropertyGroups,
-  supportsDatabaseCreation,
   supportsDatabaseSearch,
   supportsConnectionDatabaseBrowser,
   supportsConnectionQueryActions,
@@ -3393,6 +3393,7 @@ async function executeTreeNodeSqlWithProductionGuard(
     isCancelledBeforeDispatch?: () => boolean;
     beforeExecute?: () => Promise<void>;
     markDispatched?: () => void;
+    timeoutSecs?: number;
   } = {},
 ) {
   if (!node.connectionId) return undefined;
@@ -3418,7 +3419,7 @@ async function executeTreeNodeSqlWithProductionGuard(
       await options.beforeExecute?.();
       if (options.isCancelledBeforeDispatch?.()) throw new Error("Operation cancelled before it was sent to the database.");
       options.markDispatched?.();
-      return options.executeAsScript ? api.executeScript(node.connectionId!, database, sql, options.schema ?? node.schema) : api.executeQuery(node.connectionId!, database, sql, options.schema ?? node.schema, executionId, { timeoutSecs });
+      return options.executeAsScript ? api.executeScript(node.connectionId!, database, sql, options.schema ?? node.schema) : api.executeQuery(node.connectionId!, database, sql, options.schema ?? node.schema, executionId, { timeoutSecs: options.timeoutSecs ?? timeoutSecs });
     },
   });
 }
@@ -3918,7 +3919,7 @@ const canSetCreateDatabaseLocale = computed(() => {
 
 const canDropDatabase = computed(() => {
   const config = activeNode.value.connectionId ? connectionStore.getConfig(activeNode.value.connectionId) : undefined;
-  return activeNode.value.type === "database" && !isSqlServerLinkedNode(activeNode.value) && (supportsDatabaseCreation(config?.db_type) || supportsCreateDatabaseLocale(config?.db_type, config?.driver_profile));
+  return canDropDatabaseNode(activeNode.value, config);
 });
 
 const databasePropertyGroups = computed(() => {
@@ -4626,7 +4627,7 @@ async function confirmDropDatabase() {
   }
 
   const connectionId = node.connectionId;
-  if (!connectionId || dropDatabaseLoading.value) return;
+  if (!connectionId || dropDatabaseLoading.value || !canDropDatabaseNode(node, connectionStore.getConfig(connectionId))) return false;
   dropDatabaseLoading.value = true;
   try {
     await connectionStore.ensureConnected(connectionId);
@@ -4648,6 +4649,8 @@ async function confirmDropDatabase() {
       connectionStore.removeTreeNode(node.id);
     }
     showDropDatabaseConfirm.value = false;
+    notifyDatabaseBrowserMutation({ connectionId, database: node.database || node.label, operation: "drop-database" });
+    queryStore.closeDatabaseTabs(connectionId, node.database || node.label);
   } catch (e: any) {
     toast(t("contextMenu.tableOperationFailed", { message: e?.message || String(e) }), 5000);
   } finally {
@@ -4843,7 +4846,7 @@ async function confirmPasteTable() {
           identifierQuote: connectionStore.connectionIdentifierQuote?.(entry.connectionId),
           ...dataCopyColumnOptions,
         });
-        const dataExecuted = await executeTreeNodeSqlWithProductionGuard(entry, dataSql, { database: entry.database, schema: entry.schema });
+        const dataExecuted = await executeTreeNodeSqlWithProductionGuard(entry, dataSql, { database: entry.database, schema: entry.schema, timeoutSecs: 0 });
         if (!dataExecuted) {
           pasteCancelled = true;
           break;
@@ -6441,7 +6444,7 @@ function buildSpecialSidebarMenu(context: SidebarMenuFactoryContext): boolean {
   if (node.type === "mongo-collection") {
     items.push({ label: t("contextMenu.copyName"), action: copyName, icon: Copy, shortcut: shortcutCopyName.value });
     items.push({ label: "", separator: true });
-    items.push({ label: t("contextMenu.viewData"), action: toggle, icon: TableProperties });
+    items.push({ label: t("contextMenu.viewData"), action: () => openMongoTreeData(node), icon: TableProperties });
     items.push({ label: t("contextMenu.newQuery"), action: newQuery, icon: TerminalSquare });
     // Creating and dropping indexes stay on the Indexes group node; the collection
     // only opens the manager panel, which offers creation from inside itself.

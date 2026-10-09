@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import i18n from "@/i18n";
 import type { QueryResult } from "@/types/database";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import type { DataGridToolbarActionCapability, DataGridToolbarExportCapability } from "@/lib/dataGrid/dataGridToolbar";
+import type { DataGridToolbarActionCapability } from "@/lib/dataGrid/dataGridToolbar";
 
 vi.mock("@/composables/useDataGridColumnResize", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/composables/useDataGridColumnResize")>();
@@ -95,7 +95,7 @@ function mountToolbar() {
   );
 }
 
-function mountGrid() {
+function mountGrid(resultOverride?: Partial<QueryResult>) {
   const pinia = createPinia();
   setActivePinia(pinia);
   const settingsStore = useSettingsStore();
@@ -108,11 +108,9 @@ function mountGrid() {
     rows: [[1, "Ada"]],
     affected_rows: 0,
     execution_time_ms: 0,
+    ...resultOverride,
   });
-  const grid = ref<{
-    goToColumnToolbarCapability: DataGridToolbarActionCapability;
-    exportToolbarCapability: DataGridToolbarExportCapability;
-  }>();
+  const grid = ref<{ goToColumnToolbarCapability: DataGridToolbarActionCapability }>();
   const host = document.createElement("div");
   document.body.append(host);
   const Root = defineComponent({
@@ -216,19 +214,20 @@ describe("data grid icon-only toolbar tooltips", () => {
     expect(host.querySelector('[data-slot="popover-content"]')).toBeNull();
   });
 
-  it("provides export capability and renders the export button in the top toolbar", async () => {
-    const { host, grid } = mountGrid();
+  it("hides the bottom pagination export menu when the result has no columns", async () => {
+    const { host } = mountGrid({ columns: [], rows: [] });
     await settle();
 
-    expect(grid.value?.exportToolbarCapability.visible).toBe(true);
-    expect(grid.value?.exportToolbarCapability.label).toBe("Export");
-    expect(grid.value?.exportToolbarCapability.items.length).toBeGreaterThan(0);
+    const bottomExportMenu = Array.from(host.querySelectorAll("button")).find((btn) => btn.getAttribute("aria-label") === "Export");
+    expect(bottomExportMenu).toBeUndefined();
+  });
 
-    const button = toolbarButton(host, "exportData");
-    expect(button).not.toBeNull();
-    await click(button);
+  it("shows the bottom pagination export menu when the result has columns", async () => {
+    const { host } = mountGrid();
+    await settle();
 
-    expectPositionedSurface("dropdown-menu-content");
+    const bottomExportMenu = Array.from(host.querySelectorAll("button")).find((btn) => btn.getAttribute("aria-label") === "Export");
+    expect(bottomExportMenu).not.toBeUndefined();
   });
 });
 

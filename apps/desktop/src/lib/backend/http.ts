@@ -151,6 +151,11 @@ import type {
   HistorySearchRequest,
   HistorySearchResult,
   HistoryConnectionOption,
+  TaskRunDetail,
+  TaskRunItemsPage,
+  TaskRunItemsQuery,
+  TaskRunListQuery,
+  TaskRunPage,
   SqlFileRequest,
   SqlFilePreview,
   SqlFileTable,
@@ -341,6 +346,7 @@ const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   agent_store_dir: null,
   custom_ai_skill_root_enabled: false,
   custom_ai_skill_root: null,
+  custom_ai_skill_auto_enabled: false,
   sidebar_table_page_size: 1000,
 };
 
@@ -1296,6 +1302,7 @@ export async function listPartitions(connectionId: string, database: string, sch
 export interface TablePartitionStatus {
   isPartitionedParent: boolean;
   isPartition: boolean;
+  isForeign: boolean;
 }
 
 export async function getTablePartitionStatus(connectionId: string, database: string, schema: string, table: string): Promise<TablePartitionStatus> {
@@ -1717,7 +1724,7 @@ export async function buildCreateUserSql(username: string, password: string, tab
   });
 }
 
-export async function getExplainInfo(connectionId: string, database: string | undefined, schema: string | undefined, sql: string, mode: string): Promise<string | undefined> {
+export async function getExplainInfo(connectionId: string, database: string | undefined, schema: string | undefined, sql: string, mode: string, executionId?: string, timeoutSecs?: number): Promise<string | undefined> {
   // Match the Tauri path: transport and Agent failures must remain distinguishable from an empty plan.
   return post<string>("/api/query/get-explain-info", {
     connectionId,
@@ -1725,6 +1732,8 @@ export async function getExplainInfo(connectionId: string, database: string | un
     schema,
     sql,
     mode,
+    ...(executionId ? { executionId } : {}),
+    ...(timeoutSecs === undefined ? {} : { timeoutSecs }),
   });
 }
 
@@ -2119,6 +2128,7 @@ export async function aiAgentStream(
   confirmedSchema?: string,
   signal?: AbortSignal,
   selectedDatabases?: string[],
+  allowSkills = false,
 ): Promise<string> {
   const res = await fetch(apiUrl("/api/ai/agent-stream"), {
     method: "POST",
@@ -2137,6 +2147,9 @@ export async function aiAgentStream(
       confirmedDatabase,
       confirmedSchema,
       selectedDatabases,
+      // The web server ignores this by design: local skill files are never
+      // exposed to it (there is no request field on that route either).
+      allowSkills,
     }),
     signal,
   });
@@ -2483,6 +2496,7 @@ export interface WebDavConfig {
   username?: string;
   password?: string;
   remotePath?: string;
+  userAgent?: string;
 }
 
 export interface WebDavSyncSummary {
@@ -5291,6 +5305,31 @@ export async function searchHistory(request: HistorySearchRequest): Promise<Hist
 
 export async function loadHistoryConnectionOptions(): Promise<HistoryConnectionOption[]> {
   return get("/api/history/options");
+}
+
+export async function loadTaskRuns(query: TaskRunListQuery = {}): Promise<TaskRunPage> {
+  return get(
+    `/api/task-runs?${qs({
+      limit: query.limit,
+      cursorCreatedAt: query.cursor?.createdAt,
+      cursorRunId: query.cursor?.runId,
+      taskType: query.taskType,
+      status: query.status,
+    })}`,
+  );
+}
+
+export async function loadTaskRun(runId: string): Promise<TaskRunDetail | null> {
+  return get(`/api/task-runs/${encodeURIComponent(runId)}`);
+}
+
+export async function loadTaskRunItems(runId: string, query: TaskRunItemsQuery = {}): Promise<TaskRunItemsPage> {
+  return get(
+    `/api/task-runs/${encodeURIComponent(runId)}/items?${qs({
+      limit: query.limit,
+      afterItemIndex: query.afterItemIndex,
+    })}`,
+  );
 }
 
 export async function loadRedisHistory(limit = 100, offset = 0): Promise<HistoryEntry[]> {

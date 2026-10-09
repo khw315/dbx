@@ -259,4 +259,35 @@ describe("drawCanvasDataGrid with frozen columns", () => {
     });
     expect(() => drawCanvasDataGrid(optionsWithCustomZebraColor)).not.toThrow();
   });
+
+  it("draws with duplicate and null highlight keys without error", () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 800;
+    canvas.height = 600;
+    const dupKeys = new Set<number>([0, 1]);
+    const nullKeys = new Set<number>([2]);
+
+    const options = createBaseOptions({
+      canvas,
+      duplicateHighlightKeys: dupKeys,
+      nullHighlightKeys: nullKeys,
+    });
+    expect(() => drawCanvasDataGrid(options)).not.toThrow();
+  });
+
+  it("draws with custom crosshair row and column colors", () => {
+    const canvas = createMockCanvas();
+    const optionsWithCustomCrosshairColors = createBaseOptions({
+      canvas,
+      crosshair: {
+        rowIndex: 0,
+        visibleColIdx: 0,
+        rowCrosshair: true,
+        columnCrosshair: true,
+      },
+      crosshairRowBg: "#aec3e0",
+      crosshairColBg: "#8eaad2",
+    });
+    expect(() => drawCanvasDataGrid(optionsWithCustomCrosshairColors)).not.toThrow();
+  });
 });

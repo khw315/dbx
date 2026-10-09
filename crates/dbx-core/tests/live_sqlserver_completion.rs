@@ -64,6 +64,7 @@ fn live_sqlserver_config(id: &str, database: &str) -> dbx_core::models::connecti
         redis_scan_page_size: None,
         redis_database_aliases: Default::default(),
         redis_key_templates: Vec::new(),
+        redis_key_filter: None,
         redis_key_grouping: None,
         etcd_endpoints: String::new(),
         gbase_server: String::new(),
@@ -82,6 +83,7 @@ fn live_sqlserver_config(id: &str, database: &str) -> dbx_core::models::connecti
         production_databases: vec![],
         show_system_schemas: false,
         sidebar_auto_load_all_tables: false,
+        show_database_links: None,
         database_info: None,
     }
 }
@@ -1020,8 +1022,10 @@ async fn live_sqlserver_table_structure_default_changes_drop_existing_constraint
         table_comment: None,
         original_table_comment: None,
         mysql_engine: None,
+        mysql_auto_increment_value: None,
         transwarp_create: None,
         partitioned: false,
+        foreign_table: false,
         is_gaussdb_m_mode: false,
         table_collation: None,
     });
@@ -1221,6 +1225,7 @@ async fn live_sqlserver_query_result_export_streams_cte_query_to_csv() {
         csv_quote_mode: Default::default(),
         null_literal: String::new(),
         export_table_name: None,
+        export_schema: None,
         export_column_types: None,
         selected_columns: None,
         export_column_extras: None,
@@ -1390,6 +1395,7 @@ async fn live_sqlserver_transfer_table_skips_rowversion_insert_column() {
         .await
         .expect("connect target transfer pool");
     let request = dbx_core::transfer::TransferRequest {
+        table_filters: std::collections::HashMap::new(),
         transfer_id: format!("live-sqlserver-rowversion-{suffix}"),
         source_connection_id: "live-sqlserver-rowversion".to_string(),
         source_database: database.clone(),
@@ -1404,7 +1410,7 @@ async fn live_sqlserver_transfer_table_skips_rowversion_insert_column() {
         drop_target_before_create: false,
         drop_target_confirmed: false,
         content: dbx_core::transfer::TransferContent::default(),
-        objects: Vec::new(),
+        objects: Some(Vec::new()),
         mode: dbx_core::transfer::TransferMode::Append,
         target_table_name_case: dbx_core::transfer::TransferTableNameCase::Upper,
         quote_target_column_names: true,

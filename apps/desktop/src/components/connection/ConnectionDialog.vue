@@ -74,7 +74,7 @@ import { isTauriRuntime } from "@/lib/backend/tauriRuntime";
 import { isWindows } from "@/lib/backend/platform";
 import { applyMeilisearchBasePathToExternalConfig, applyParsedConnectionUrl, normalizeMongoConnectionString, parseConnectionUrl } from "@/lib/connection/connectionUrl";
 import { hasXuguConnectionDatabase } from "@/lib/connection/xuguDatabase";
-import { DEFAULT_QUERY_TIMEOUT_SECS, MAX_CONNECT_TIMEOUT_SECS, MAX_QUERY_TIMEOUT_SECS } from "@/lib/connection/timeoutLimits";
+import { DEFAULT_QUERY_TIMEOUT_SECS, MAX_CONNECT_TIMEOUT_SECS, MAX_IDLE_TIMEOUT_SECS, MAX_QUERY_TIMEOUT_SECS, supportsIdleTimeout } from "@/lib/connection/timeoutLimits";
 import { buildOracleTnsConnectionString, normalizeOracleTnsAdminPath, parseOracleTnsConnectionString } from "@/lib/connection/oracleTnsConnection";
 import { applyConnectionDeepLinkUpdate, resolveConnectionDeepLinkUpdate } from "@/lib/connection/connectionDeepLinkUpdate";
 import { connectionDeepLinkServiceHydrationValue, parseConnectionDeepLink, parseConnectionDeepLinkUpdate, parseServiceConnectionUrl, type ConnectionDeepLinkDraft, type ConnectionDeepLinkUpdate } from "@/lib/connection/connectionDeepLink";
@@ -441,6 +441,7 @@ const defaultForm = (): ConnectionForm => ({
   redis_key_separator: ":",
   redis_scan_page_size: REDIS_SCAN_PAGE_SIZE_DEFAULT,
   redis_key_templates: [],
+  redis_key_filter: "",
   etcd_endpoints: "",
   gbase_server: "",
   informix_server: "",
@@ -3131,6 +3132,7 @@ watch(
         redis_key_separator: config.redis_key_separator ?? ":",
         redis_scan_page_size: config.redis_scan_page_size ?? REDIS_SCAN_PAGE_SIZE_DEFAULT,
         redis_key_templates: normalizeRedisKeyTemplates(config.redis_key_templates),
+        redis_key_filter: config.redis_key_filter ?? "",
         redis_key_grouping: config.redis_key_grouping,
         etcd_endpoints: config.etcd_endpoints || "",
         gbase_server: config.gbase_server || "",
@@ -3846,6 +3848,7 @@ const showGenericUrlParamsHint = computed(() => form.value.db_type === "mysql" |
 const bareMysqlProfiles = new Set(["doris", "selectdb", "oceanbase"]);
 const supportsMysqlTlsOptions = computed(() => mysqlTlsOptionsSupported(form.value.db_type, selectedType.value));
 const supportsMysqlCleartextPasswordAuth = computed(() => form.value.db_type === "mysql" && !bareMysqlProfiles.has(selectedType.value));
+const supportsIdleTimeoutSetting = computed(() => supportsIdleTimeout(form.value.db_type));
 const supportsDoltSystemTables = computed(() => isDoltDriverProfile(form.value.driver_profile));
 const showDoltSystemTables = computed({
   get: () => doltSystemTablesVisible(form.value),
@@ -3954,6 +3957,17 @@ const firebirdCharset = computed({
   get: () => getUrlParam(form.value.url_params, "charSet") || "default",
   set: (value: string) => {
     form.value.url_params = setUrlParam(form.value.url_params, "charSet", value === "default" ? "" : value);
+  },
+});
+const FIREBIRD_DATA_CHARSET_OPTIONS = ["GBK", "GB18030", "BIG5"];
+const firebirdDataCharsetItems = computed(() => {
+  const current = getUrlParam(form.value.url_params, "dataCharset");
+  return current && !FIREBIRD_DATA_CHARSET_OPTIONS.includes(current) ? [current, ...FIREBIRD_DATA_CHARSET_OPTIONS] : FIREBIRD_DATA_CHARSET_OPTIONS;
+});
+const firebirdDataCharset = computed({
+  get: () => getUrlParam(form.value.url_params, "dataCharset") || "default",
+  set: (value: string) => {
+    form.value.url_params = setUrlParam(form.value.url_params, "dataCharset", value === "default" ? "" : value);
   },
 });
 const redisTlsInsecure = computed({
@@ -5161,6 +5175,7 @@ function connectionConfigForSubmit(id: string, generatedName = "", validatePlugi
     config.redis_scan_page_size = undefined;
     config.redis_database_aliases = undefined;
     config.redis_key_templates = undefined;
+    config.redis_key_filter = undefined;
     config.redis_key_grouping = undefined;
   } else if (config.redis_connection_mode === "sentinel") {
     config.redis_sentinel_master = config.redis_sentinel_master?.trim() || "";
@@ -5195,6 +5210,7 @@ function connectionConfigForSubmit(id: string, generatedName = "", validatePlugi
   }
   if (config.db_type === "redis") {
     config.redis_key_separator = config.redis_key_separator?.trim() ?? ":";
+    config.redis_key_filter = config.redis_key_filter?.trim() || undefined;
     const scanSize = Number(config.redis_scan_page_size);
     config.redis_scan_page_size = Number.isFinite(scanSize) && scanSize >= REDIS_SCAN_PAGE_SIZE_MIN && scanSize <= REDIS_SCAN_PAGE_SIZE_MAX ? Math.round(scanSize) : REDIS_SCAN_PAGE_SIZE_DEFAULT;
     {
@@ -6573,6 +6589,15 @@ function clampConnectTimeoutInput(event: Event, target: "global" | "connection")
   input.value = String(MAX_CONNECT_TIMEOUT_SECS);
   if (target === "global") editGlobalConnectTimeoutSecs.value = MAX_CONNECT_TIMEOUT_SECS;
   else form.value.connect_timeout_secs = MAX_CONNECT_TIMEOUT_SECS;
+}
+
+function clampIdleTimeoutInput(event: Event) {
+  const input = event.target as HTMLInputElement;
+  if (input.value === "") return;
+  const value = Number(input.value);
+  if (!Number.isFinite(value) || value <= MAX_IDLE_TIMEOUT_SECS) return;
+  input.value = String(MAX_IDLE_TIMEOUT_SECS);
+  form.value.idle_timeout_secs = MAX_IDLE_TIMEOUT_SECS;
 }
 
 async function persistGlobalTimeoutDrafts() {
@@ -8104,6 +8129,13 @@ function openExternalUrl(url: string) {
                       <Input v-model="form.redis_key_separator" class="col-span-3 h-8 text-xs" placeholder=":" />
                     </div>
                     <div class="grid grid-cols-4 items-start gap-4">
+                      <Label for="redis-key-filter" :class="connectionLabelTopClass">{{ t("connection.redisKeyFilter") }}</Label>
+                      <div class="col-span-3 space-y-1">
+                        <Input id="redis-key-filter" v-model="form.redis_key_filter" class="h-8 text-xs" placeholder="order:*" spellcheck="false" />
+                        <p class="text-xs text-muted-foreground">{{ t("connection.redisKeyFilterHint") }}</p>
+                      </div>
+                    </div>
+                    <div class="grid grid-cols-4 items-start gap-4">
                       <Label :class="connectionLabelTopClass">{{ t("connection.redisKeyTemplates") }}</Label>
                       <div class="col-span-3 space-y-1">
                         <textarea
@@ -9387,6 +9419,20 @@ function openExternalUrl(url: string) {
                       </div>
                     </div>
 
+                    <div v-if="form.db_type === 'firebird'" class="grid grid-cols-4 items-start gap-4">
+                      <Label :class="connectionLabelTopClass">{{ t("connection.firebirdDataCharset") }}</Label>
+                      <div class="col-span-3 space-y-1.5">
+                        <Select v-model="firebirdDataCharset">
+                          <SelectTrigger class="h-9"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="default">{{ t("common.default") }}</SelectItem>
+                            <SelectItem v-for="charset in firebirdDataCharsetItems" :key="charset" :value="charset">{{ charset }}</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <p class="text-xs leading-5 text-muted-foreground">{{ t("connection.firebirdDataCharsetHint") }}</p>
+                      </div>
+                    </div>
+
                     <div v-if="supportsGenericUrlParams" class="connection-url-params-row grid grid-cols-4 items-start gap-4" :class="{ 'connection-url-params-row--compact': !showGenericUrlParamsHint, 'connection-url-params-row--with-hint': showGenericUrlParamsHint }">
                       <Label :class="[connectionLabelClass, 'connection-url-params-label']">{{ t("connection.urlParams") }}</Label>
                       <div class="col-span-3 space-y-1.5">
@@ -10243,9 +10289,12 @@ function openExternalUrl(url: string) {
                     </div>
                   </div>
                 </div>
-                <div v-show="form.db_type === 'mongodb'" class="grid grid-cols-4 items-center gap-4">
-                  <Label :class="connectionLabelSmallClass">{{ t("connection.idleTimeout") }}</Label>
-                  <Input v-model.number="form.idle_timeout_secs" type="number" min="0" max="600" step="1" class="col-span-3" />
+                <div v-show="supportsIdleTimeoutSetting" class="grid grid-cols-4 items-start gap-4">
+                  <Label :class="connectionLabelSmallPaddedClass">{{ t("connection.idleTimeout") }}</Label>
+                  <div class="col-span-3 space-y-1">
+                    <Input v-model.number="form.idle_timeout_secs" type="number" min="0" :max="MAX_IDLE_TIMEOUT_SECS" step="1" @input="clampIdleTimeoutInput($event)" />
+                    <p class="text-xs leading-5 text-muted-foreground">{{ t("connection.idleTimeoutHint") }}</p>
+                  </div>
                 </div>
                 <div class="grid grid-cols-4 items-center gap-4">
                   <Label :class="connectionLabelSmallClass">{{ t("connection.keepaliveInterval") }}</Label>

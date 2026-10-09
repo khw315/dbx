@@ -122,6 +122,18 @@ describe("shortcutRegistry editor actions", () => {
     expect(findShortcutConflict("goToColumn", "Mod+F", shortcuts)).toBeNull();
   });
 
+  it("registers edit-cell F2 as a conflict-free grid default", () => {
+    const definition = SHORTCUT_DEFINITIONS.find((item) => item.id === "editCell");
+
+    expect(definition).toMatchObject({
+      labelKey: "settings.shortcutEditCell",
+      scope: "grid",
+      defaultShortcut: "F2",
+    });
+    expect(DEFAULT_SHORTCUT_SETTINGS.editCell).toBe("F2");
+    expect(findShortcutConflict("editCell", DEFAULT_SHORTCUT_SETTINGS.editCell, DEFAULT_SHORTCUT_SETTINGS)).toBeNull();
+  });
+
   it("registers copy-current-row Mod+D and edit-table-structure Mod+Shift+D as conflict-free grid defaults", () => {
     const definition = SHORTCUT_DEFINITIONS.find((item) => item.id === "editTableStructure");
 
@@ -179,6 +191,16 @@ describe("shortcutRegistry editor actions", () => {
     expect(definition).toMatchObject({ labelKey: "toolbar.explainPlan", scope: "editor", defaultShortcut: "Mod+E" });
     expect(shortcutToCodeMirrorKey(DEFAULT_SHORTCUT_SETTINGS.explainSql)).toBe("Mod-e");
     expect(findShortcutConflict("explainSql", "Mod+E", DEFAULT_SHORTCUT_SETTINGS)).toBeNull();
+  });
+
+  it("registers a configurable editor shortcut for selecting the current statement", () => {
+    const definition = SHORTCUT_DEFINITIONS.find((item) => item.id === "selectCurrentStatement");
+
+    expect(definition).toMatchObject({ labelKey: "settings.shortcutSelectCurrentStatement", scope: "editor", defaultShortcut: "Mod+Shift+E" });
+    expect(shortcutToCodeMirrorKey(DEFAULT_SHORTCUT_SETTINGS.selectCurrentStatement)).toBe("Mod-Shift-e");
+    expect(findShortcutConflict("selectCurrentStatement", DEFAULT_SHORTCUT_SETTINGS.selectCurrentStatement, DEFAULT_SHORTCUT_SETTINGS)).toBeNull();
+    // 与侧栏「断开连接」同键属于有意的跨作用域复用（仅提示，不影响编辑器内触发）
+    expect(findCrossScopeShortcutConflicts(DEFAULT_SHORTCUT_SETTINGS).selectCurrentStatement).toContain("disconnectSidebarConnection");
   });
 
   it("keeps current-view search and editor find contextual on Mod+F", () => {
@@ -251,6 +273,21 @@ describe("shortcutRegistry editor actions", () => {
     expect(normalizeShortcutSettings({ closeTab: "Meta+W" }).closeTab).toBe("Mod+W");
     expect(normalizeShortcutSettings({ closeTab: "Shift+Mod+W" }).closeTab).toBe("Shift+Mod+W");
     expect(normalizeShortcutSettings({ closeTab: "" }).closeTab).toBe("");
+  });
+
+  it("registers closeWindow as a global shortcut with Shift+Mod+W default", () => {
+    const definition = SHORTCUT_DEFINITIONS.find((item) => item.id === "closeWindow");
+    expect(definition).toMatchObject({
+      id: "closeWindow",
+      labelKey: "settings.shortcutCloseWindow",
+      scope: "global",
+      defaultShortcut: "Shift+Mod+W",
+    });
+    expect(DEFAULT_SHORTCUT_SETTINGS.closeWindow).toBe("Shift+Mod+W");
+    expect(formatShortcut(DEFAULT_SHORTCUT_SETTINGS.closeWindow, "Win32")).toBe("Ctrl+Shift+W");
+    expect(formatShortcut(DEFAULT_SHORTCUT_SETTINGS.closeWindow, "MacIntel")).toBe("Shift+Cmd+W");
+    expect(normalizeShortcutSettings({ closeWindow: "Mod+Alt+W" }).closeWindow).toBe("Mod+Alt+W");
+    expect(normalizeShortcutSettings({ closeWindow: "" }).closeWindow).toBe("");
   });
 
   it("normalizes custom, cleared, and invalid modifier-only shortcuts", () => {

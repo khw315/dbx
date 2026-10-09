@@ -63,6 +63,7 @@ fn live_postgres_config(
         redis_scan_page_size: None,
         redis_database_aliases: Default::default(),
         redis_key_templates: Vec::new(),
+        redis_key_filter: None,
         redis_key_grouping: None,
         etcd_endpoints: String::new(),
         gbase_server: String::new(),
@@ -81,6 +82,7 @@ fn live_postgres_config(
         production_databases: vec![],
         show_system_schemas: false,
         sidebar_auto_load_all_tables: false,
+        show_database_links: None,
         database_info: None,
     }
 }

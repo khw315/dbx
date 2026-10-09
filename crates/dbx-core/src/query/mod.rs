@@ -7,6 +7,7 @@ pub mod plugin_data;
 pub mod plugin_plan;
 pub mod query_cancel;
 pub mod redis_ops;
+mod sqlserver_agent_batch;
 pub mod sqlserver_manual_transaction;
 pub mod two_phase_commit;
 
@@ -573,6 +574,10 @@ fn truncate_server_large_value_preview(
         ServerLargeValuePreviewKind::Text => text.char_indices().nth(preview_size).map(|(index, _)| index),
         ServerLargeValuePreviewKind::Binary => text
             .strip_prefix("0x")
+            .or_else(|| text.strip_prefix("0X"))
+            // PostgreSQL text-protocol queries (including rows with timestamps)
+            // return bytea as \x hex instead of the binary driver's 0x form.
+            .or_else(|| text.strip_prefix("\\x"))
             .filter(|hex| hex.len() > preview_size.saturating_mul(2))
             .map(|_| 2usize.saturating_add(preview_size.saturating_mul(2))),
         ServerLargeValuePreviewKind::Vector | ServerLargeValuePreviewKind::Deferred => unreachable!(),
@@ -3331,6 +3336,8 @@ async fn execute_multi_core_with_options_for_client_and_progress_typed_inner(
     };
 
     let compatibility_mode = connection_sql_compatibility_mode(state, &pool_key, db_type).await;
+    let complete_sqlserver_agent_batch =
+        is_sqlserver_agent && sqlserver_agent_batch::requires_complete_results(sql, &options);
     let execution_plan =
         query_execution_plan_with_compatibility(sql, db_type, is_sqlserver_agent, compatibility_mode.as_deref());
     let continue_on_error = options.continue_on_error && !execution_plan.stop_on_error;
@@ -3408,6 +3415,7 @@ async fn execute_multi_core_with_options_for_client_and_progress_typed_inner(
     };
 
     if statements.len() == 1
+        && !complete_sqlserver_agent_batch
         && !mysql_single_statement_uses_batch_route(
             db_type,
             mysql_pool.is_some(),
@@ -3472,24 +3480,56 @@ async fn execute_multi_core_with_options_for_client_and_progress_typed_inner(
             ));
             break;
         }
-        match execute_sql_statement_with_options_typed(
-            state,
-            connection_id,
-            database,
-            stmt,
-            schema,
-            cancel_token.clone(),
-            statement_options.clone(),
-        )
-        .await
-        {
-            Ok(r) => {
-                report_execute_multi_progress(progress.as_ref(), statement_index, statements.len(), &r, true, None);
-                results.push(ExecuteMultiResult::success_with_index_and_optional_server_large_values(
-                    r,
-                    statement_index,
-                    options.table_data_preview,
-                ));
+        let execution = if complete_sqlserver_agent_batch {
+            Box::pin(sqlserver_agent_batch::execute(
+                state,
+                &pool_key,
+                database,
+                stmt,
+                schema,
+                cancel_token.clone(),
+                statement_options.clone(),
+            ))
+            .await
+        } else {
+            execute_sql_statement_with_options_typed(
+                state,
+                connection_id,
+                database,
+                stmt,
+                schema,
+                cancel_token.clone(),
+                statement_options.clone(),
+            )
+            .await
+            .map(|result| vec![result])
+        };
+        match execution {
+            Ok(batch_results) => {
+                for result in batch_results {
+                    report_execute_multi_progress(
+                        progress.as_ref(),
+                        statement_index,
+                        statements.len(),
+                        &result,
+                        true,
+                        None,
+                    );
+                    results.push(if complete_sqlserver_agent_batch {
+                        // One GO batch can contain several statements/results;
+                        // do not label every result as its first statement.
+                        ExecuteMultiResult::success_with_optional_server_large_values(
+                            result,
+                            options.table_data_preview,
+                        )
+                    } else {
+                        ExecuteMultiResult::success_with_index_and_optional_server_large_values(
+                            result,
+                            statement_index,
+                            options.table_data_preview,
+                        )
+                    });
+                }
             }
             Err(error) => {
                 let action = query_execution_error_action(db_type, stmt, &error);
@@ -5243,6 +5283,8 @@ async fn exec_tx_pg_statements(
     budget: &DbOperationBudget,
     cancel_context: Option<db::postgres::PostgresCancelContext>,
 ) -> Result<u64, QueryExecutionError> {
+    let statements =
+        statements.iter().map(|sql| db::postgres::encode_postgres_sql(client, sql)).collect::<Result<Vec<_>, _>>()?;
     let tx = tokio::time::timeout(budget.recycle_timeout, client.transaction())
         .await
         .map_err(|_| {
@@ -8134,6 +8176,7 @@ for line in sys.stdin:
             visible_schemas: None,
             show_system_schemas: false,
             sidebar_auto_load_all_tables: false,
+            show_database_links: None,
             attached_databases: Vec::new(),
             init_script: None,
             color: None,
@@ -8160,6 +8203,7 @@ for line in sys.stdin:
             redis_scan_page_size: None,
             redis_database_aliases: Default::default(),
             redis_key_templates: Vec::new(),
+            redis_key_filter: None,
             redis_key_grouping: None,
             etcd_endpoints: String::new(),
             gbase_server: String::new(),
@@ -8244,14 +8288,31 @@ for line in sys.stdin:
 print(json.dumps({'ready': True}), flush=True)
 for line in sys.stdin:
     req = json.loads(line)
+    with open(sys.argv[1], 'a') as calls:
+        calls.write(json.dumps(req) + '\n')
     if req['method'] == 'handshake':
         result = {'protocolVersion': 2, 'agentProtocolVersion': 2, 'capabilities': ['multi_session']}
-    elif req['method'] == 'execute_query':
+    elif req['method'] in ('execute_query', 'execute_query_page'):
         result = {
             'columns': ['sql'], 'column_types': ['nvarchar'], 'column_sortables': [],
             'rows': [[req['params']['sql']]], 'affected_rows': 0, 'execution_time_ms': 1,
             'truncated': False, 'session_id': None, 'has_more': False
         }
+        if req['params'].get('returnAllResults'):
+            result = [result]
+            sql = req['params']['sql']
+            if 'RAISERROR' in sql:
+                print(json.dumps({'jsonrpc':'2.0', 'id':req['id'], 'error': {
+                    'code': -1, 'message': 'late SQL Server batch error', 'data': {
+                        'category': 'sql', 'sqlState': 'S0001', 'vendorCode': 50000,
+                        'retryable': False, 'sessionDisposition': 'keep', 'stage': 'execute'
+                    }}}), flush=True)
+                continue
+            if 'SELECT 101' in sql and 'SELECT 303' in sql:
+                result = [dict(result[0], columns=[name], rows=rows) for name, rows in [
+                    ('first_result', [[101], [102], [103]]), ('second_result', [[202]]), ('third_result', [[303]])]]
+    elif req['method'] == 'fetch_query_page':
+        result = {'columns': ['next_page'], 'rows': [[2]], 'affected_rows': 0, 'execution_time_ms': 1}
     elif req['method'] in ('execute_batch', 'execute_transaction'):
         if req['params'].get('schema') is not None:
             print(json.dumps({
@@ -8273,8 +8334,10 @@ for line in sys.stdin:
 
         let python = if cfg!(windows) { "python" } else { "python3" };
         let runtime = crate::db::agent_driver::AgentRuntimeClient::spawn(
-            crate::db::agent_driver::AgentLaunchSpec::new(python)
-                .with_args([script_path.to_string_lossy().to_string()]),
+            crate::db::agent_driver::AgentLaunchSpec::new(python).with_args([
+                script_path.to_string_lossy().to_string(),
+                dir.join("calls.jsonl").to_string_lossy().to_string(),
+            ]),
             "test",
         )
         .await
@@ -8325,6 +8388,172 @@ for line in sys.stdin:
         runtime.kill();
         drop(state);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    fn sqlserver_agent_calls(dir: &std::path::Path) -> Vec<serde_json::Value> {
+        std::fs::read_to_string(dir.join("calls.jsonl"))
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .filter(|request: &serde_json::Value| {
+                matches!(request["method"].as_str(), Some("execute_query" | "execute_query_page" | "fetch_query_page"))
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn sqlserver_agent_multi_execution_collects_all_results_without_cursor_or_replay() {
+        for page_size in [None, Some(100)] {
+            let (state, dir, runtime) = sqlserver_agent_echo_state().await;
+            let sql = "SELECT 101 AS first_result; SELECT 202 AS second_result; SELECT 303 AS third_result;";
+            let results = execute_multi_core_with_options_for_client_and_progress_typed(
+                &state,
+                "conn-1",
+                "",
+                sql,
+                None,
+                None,
+                QueryExecutionOptions { max_rows: Some(1), page_size, ..Default::default() },
+                None,
+            )
+            .await
+            .unwrap();
+            assert_eq!(results.len(), 3);
+            assert_eq!(results[0].result.rows, vec![vec![serde_json::json!(101)]]);
+            assert!(results[0].result.truncated);
+            assert_eq!(results[1].result.rows, vec![vec![serde_json::json!(202)]]);
+            assert_eq!(results[2].result.rows, vec![vec![serde_json::json!(303)]]);
+            assert!(results.iter().all(|result| result.statement_index.is_none()));
+            let calls = sqlserver_agent_calls(&dir);
+            assert_eq!(calls.len(), 1);
+            assert_eq!(calls[0]["method"], "execute_query");
+            assert_eq!(calls[0]["params"]["returnAllResults"], true);
+            assert_eq!(calls[0]["params"]["sql"], sql);
+            assert_eq!(calls[0]["params"]["maxRows"], 1);
+            runtime.kill();
+            drop(state);
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    #[tokio::test]
+    async fn sqlserver_agent_multi_execution_keeps_go_batches_and_variable_scope() {
+        let (state, dir, runtime) = sqlserver_agent_echo_state().await;
+        let first = "DECLARE @n INT; SET @n=1; SELECT @n;";
+        let second = "SELECT 2 AS n;";
+        let results = execute_multi_core_with_options_for_client_and_progress_typed(
+            &state,
+            "conn-1",
+            "",
+            &format!("{first}\nGO\n{second}"),
+            None,
+            None,
+            QueryExecutionOptions::default(),
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(results.len(), 2);
+        let calls = sqlserver_agent_calls(&dir);
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0]["params"]["sql"], first);
+        assert_eq!(calls[1]["params"]["sql"], second);
+        assert!(calls.iter().all(|call| call["params"]["returnAllResults"] == true));
+        runtime.kill();
+        drop(state);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn sqlserver_agent_multi_execution_preserves_errors_and_go_continue_policy() {
+        for continue_on_error in [false, true] {
+            let (state, dir, runtime) = sqlserver_agent_echo_state().await;
+            let results = execute_multi_core_with_options_for_client_and_progress_typed(
+                &state,
+                "conn-1",
+                "",
+                "SELECT 1; RAISERROR('late',16,1);\nGO\nSELECT 2;",
+                None,
+                None,
+                QueryExecutionOptions { continue_on_error, ..Default::default() },
+                None,
+            )
+            .await
+            .unwrap();
+            assert!(results[0].execution_error);
+            assert!(results[0].result.rows[0][0].as_str().unwrap().contains("late SQL Server batch error"));
+            assert!(results[0].error.is_some());
+            assert_eq!(results.len(), if continue_on_error { 2 } else { 1 });
+            assert_eq!(sqlserver_agent_calls(&dir).len(), if continue_on_error { 2 } else { 1 });
+            assert!(matches!(state.pool_handle("conn-1").await, Some(PoolKind::Agent(_))));
+            runtime.kill();
+            drop(state);
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    #[tokio::test]
+    async fn sqlserver_agent_multi_execution_preserves_single_query_and_fetch_cursors() {
+        for session_id in [None, Some("cursor-1".to_string())] {
+            let (state, dir, runtime) = sqlserver_agent_echo_state().await;
+            let results = execute_multi_core_with_options_for_client_and_progress_typed(
+                &state,
+                "conn-1",
+                "",
+                "SELECT 1 AS n;",
+                None,
+                None,
+                QueryExecutionOptions {
+                    page_size: Some(100),
+                    result_session_id: session_id.clone(),
+                    ..Default::default()
+                },
+                None,
+            )
+            .await
+            .unwrap();
+            assert_eq!(results.len(), 1);
+            let calls = sqlserver_agent_calls(&dir);
+            assert_eq!(calls.len(), 1);
+            assert_eq!(
+                calls[0]["method"],
+                if session_id.is_some() { "fetch_query_page" } else { "execute_query_page" }
+            );
+            assert!(calls[0]["params"].get("returnAllResults").is_none());
+            runtime.kill();
+            drop(state);
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    #[tokio::test]
+    async fn sqlserver_agent_multi_execution_preserves_read_only_and_pre_dispatch_cancel() {
+        for read_only in [true, false] {
+            let (state, dir, runtime) = sqlserver_agent_echo_state().await;
+            state.configs.write().await.get_mut("conn-1").unwrap().read_only = read_only;
+            let cancel = CancellationToken::new();
+            if !read_only {
+                cancel.cancel();
+            }
+            let results = execute_multi_core_with_options_for_client_and_progress_typed(
+                &state,
+                "conn-1",
+                "",
+                "SELECT 1; UPDATE users SET n=2;",
+                None,
+                Some(cancel),
+                QueryExecutionOptions::default(),
+                None,
+            )
+            .await
+            .unwrap();
+            assert_eq!(results.len(), 1);
+            assert!(results[0].execution_error);
+            assert!(sqlserver_agent_calls(&dir).is_empty());
+            runtime.kill();
+            drop(state);
+            let _ = std::fs::remove_dir_all(dir);
+        }
     }
 
     #[tokio::test]
@@ -10985,6 +11214,7 @@ for line in sys.stdin:
             visible_schemas: None,
             show_system_schemas: false,
             sidebar_auto_load_all_tables: false,
+            show_database_links: None,
             attached_databases: Vec::new(),
             init_script: None,
             color: None,
@@ -11011,6 +11241,7 @@ for line in sys.stdin:
             redis_scan_page_size: None,
             redis_database_aliases: Default::default(),
             redis_key_templates: Vec::new(),
+            redis_key_filter: None,
             redis_key_grouping: None,
             etcd_endpoints: String::new(),
             gbase_server: String::new(),
@@ -12056,7 +12287,18 @@ for line in sys.stdin:
             column_sortables: vec![true, true],
             spatial_columns: Vec::new(),
             spatial_values: Vec::new(),
-            rows: vec![vec![serde_json::json!("0x0102030405"), serde_json::json!("B:4:5")]],
+            rows: ["0x", "0X", "\\x"]
+                .into_iter()
+                .flat_map(|prefix| {
+                    [0, 1, 4, 5].into_iter().map(move |bytes| {
+                        vec![
+                            serde_json::json!(format!("{prefix}{}", "ab".repeat(bytes))),
+                            serde_json::json!(format!("B:4:{bytes}")),
+                        ]
+                    })
+                })
+                .chain([vec![serde_json::Value::Null, serde_json::Value::Null]])
+                .collect(),
             affected_rows: 0,
             execution_time_ms: 0,
             server_execute_time_us: None,
@@ -12070,8 +12312,129 @@ for line in sys.stdin:
 
         let cells = extract_server_large_value_markers(&mut result);
 
-        assert_eq!(result.rows, vec![vec![serde_json::json!("0x01020304...")]]);
-        assert_eq!(cells, vec![db::LargeValueCell { row_index: 0, column_index: 0, original_bytes: 5 }]);
+        assert_eq!(result.columns, vec!["raw_value"]);
+        assert_eq!(result.column_types, vec!["bytea"]);
+        for (prefix_index, prefix) in ["0x", "0X", "\\x"].into_iter().enumerate() {
+            for (size_index, bytes) in [0, 1, 4, 5].into_iter().enumerate() {
+                let suffix = if bytes > 4 { "..." } else { "" };
+                assert_eq!(
+                    result.rows[prefix_index * 4 + size_index],
+                    vec![serde_json::json!(format!("{prefix}{}{suffix}", "ab".repeat(bytes.min(4))))]
+                );
+            }
+        }
+        assert_eq!(result.rows[12], vec![serde_json::Value::Null]);
+        assert_eq!(
+            cells,
+            [3, 7, 11]
+                .into_iter()
+                .map(|row_index| db::LargeValueCell { row_index, column_index: 0, original_bytes: 5 })
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DBX_TEST_POSTGRES_URL pointing at PostgreSQL (read-only queries)"]
+    async fn live_postgres_bytea_preview_preserves_size_and_full_value() {
+        use crate::sql_dialect::{build_table_data_select_sql, TableDataSelectSqlOptions};
+        use sha2::{Digest, Sha256};
+
+        let url = std::env::var("DBX_TEST_POSTGRES_URL").expect("DBX_TEST_POSTGRES_URL");
+        let pool = db::postgres::connect(&url, Duration::from_secs(5)).await.expect("connect PostgreSQL");
+        let preview_size = 3276;
+        let sizes = [None, Some(0), Some(1), Some(3275), Some(3276), Some(3277), Some(9645), Some(261007)];
+        let pattern = db::hex_encode(&(0..=255).collect::<Vec<u8>>());
+        let inputs = sizes
+            .iter()
+            .enumerate()
+            .map(|(id, size)| {
+                format!("({id}, {})", size.map_or_else(|| "NULL::integer".to_string(), |n| n.to_string()))
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        // A CTE supplies repeatable bytea data without creating database objects.
+        let fixture = format!(
+            "WITH payloads AS (SELECT id, substring(decode(repeat('{pattern}', (size + 255) / 256), 'hex') \
+             from 1 for size) AS content FROM (VALUES {inputs}) AS inputs(id, size)), \
+             bytea_preview AS (SELECT id, content, now() AS created_at, octet_length(content) AS bytes, \
+             encode(sha256(content), 'hex') AS checksum FROM payloads) "
+        );
+
+        for text_protocol in [false, true] {
+            let mut columns = vec!["id".to_string(), "content".to_string()];
+            let mut column_types = vec!["int4".to_string(), "bytea".to_string()];
+            if text_protocol {
+                // A temporal column makes the driver choose PostgreSQL's text protocol.
+                columns.push("created_at".to_string());
+                column_types.push("timestamptz".to_string());
+            }
+            let select = build_table_data_select_sql(TableDataSelectSqlOptions {
+                database_type: Some(DatabaseType::Postgres),
+                table_name: "bytea_preview".to_string(),
+                primary_keys: vec!["id".to_string()],
+                columns: columns.clone(),
+                column_types: column_types.clone(),
+                large_value_preview_size: Some(preview_size),
+                limit: Some(sizes.len()),
+                order_by: Some("id".to_string()),
+                ..Default::default()
+            });
+            let raw = db::postgres::execute_query(&pool, &format!("{fixture}{select}")).await.unwrap();
+            let result = ExecuteMultiResult::success_with_optional_server_large_values(raw, true);
+            assert_eq!(result.result.columns, columns);
+            assert_eq!(result.result.column_types, column_types);
+            assert_eq!(result.result.rows.len(), sizes.len());
+            let prefix = if text_protocol { "\\x" } else { "0x" };
+
+            for (row_index, size) in sizes.into_iter().enumerate() {
+                let Some(size) = size else {
+                    assert!(result.result.rows[row_index][1].is_null());
+                    continue;
+                };
+                let bytes = (0..size).map(|index| (index % 256) as u8).collect::<Vec<_>>();
+                let suffix = if size > preview_size { "..." } else { "" };
+                assert_eq!(
+                    result.result.rows[row_index][1],
+                    serde_json::json!(format!("{prefix}{}{suffix}", db::hex_encode(&bytes[..size.min(preview_size)])))
+                );
+                if size <= preview_size {
+                    continue;
+                }
+                // The download path fetches by primary key without preview options.
+                let full_select = build_table_data_select_sql(TableDataSelectSqlOptions {
+                    database_type: Some(DatabaseType::Postgres),
+                    table_name: "bytea_preview".to_string(),
+                    primary_keys: vec!["id".to_string()],
+                    columns: ["id", "content", "bytes", "checksum"].map(str::to_string).to_vec(),
+                    where_input: Some(format!("id = {row_index}")),
+                    limit: Some(1),
+                    ..Default::default()
+                });
+                let full = db::postgres::execute_query(&pool, &format!("{fixture}{full_select}")).await.unwrap();
+                assert_eq!(full.rows.len(), 1);
+                // The table-data builder can select *, so map columns by name like
+                // the grid does. A returned timestamp also makes this fetch use text.
+                let column = |name: &str| &full.rows[0][full.columns.iter().position(|c| c == name).unwrap()];
+                let value = column("content").as_str().unwrap();
+                let hex = value.strip_prefix("0x").or_else(|| value.strip_prefix("\\x")).unwrap();
+                assert_eq!(hex.len(), size * 2);
+                assert!(hex == db::hex_encode(&bytes), "full bytea differs for row {row_index}");
+                let actual_size =
+                    column("bytes").as_u64().or_else(|| column("bytes").as_str().and_then(|value| value.parse().ok()));
+                assert_eq!(actual_size, Some(size as u64));
+                assert_eq!(column("checksum"), &serde_json::json!(db::hex_encode(&Sha256::digest(&bytes))));
+            }
+            assert_eq!(
+                result.large_value_cells,
+                sizes
+                    .into_iter()
+                    .enumerate()
+                    .filter_map(|(row_index, size)| size
+                        .filter(|size| *size > preview_size)
+                        .map(|original_bytes| { db::LargeValueCell { row_index, column_index: 1, original_bytes } }))
+                    .collect::<Vec<_>>()
+            );
+        }
     }
 
     #[test]

@@ -22,7 +22,7 @@ export function rustCommand(action, group, mode) {
   ] : appFeatures;
   const packages = group === "workspace" ? ["--workspace"] : rustGroups[group].flatMap((name) => ["--package", name]);
   const command = action === "test" ? ["nextest", "run", "--no-fail-fast"] : action === "doctest" ? ["test", "--doc"] : [action];
-  return [...command, ...packages, "--locked", ...(action === "clippy" ? ["--all-targets"] : []),
+  return [...command, ...packages, "--locked", ...(["test", "clippy"].includes(action) ? ["--timings"] : []), ...(action === "clippy" ? ["--all-targets"] : []),
     "--no-default-features", "--features", features.join(","), ...(action === "clippy" ? ["--", "-D", "warnings"] : [])];
 }
 

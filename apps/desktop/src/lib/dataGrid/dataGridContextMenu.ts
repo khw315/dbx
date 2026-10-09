@@ -70,6 +70,45 @@ export function createDataGridFilterSubmenu(options: {
   };
 }
 
+export function createDataGridHighlightSubmenu(options: {
+  label: string;
+  icon: Component;
+  labels: {
+    duplicates: string;
+    nulls: string;
+    clear: string;
+  };
+  hasDuplicatesActive?: boolean;
+  hasNullsActive?: boolean;
+  canClear?: boolean;
+  toggleDuplicates: () => void;
+  toggleNulls: () => void;
+  clear: () => void;
+}): DataGridContextMenuItem {
+  return {
+    label: options.label,
+    icon: options.icon,
+    children: [
+      {
+        label: options.labels.duplicates,
+        checked: options.hasDuplicatesActive,
+        action: options.toggleDuplicates,
+      },
+      {
+        label: options.labels.nulls,
+        checked: options.hasNullsActive,
+        action: options.toggleNulls,
+      },
+      { label: "", separator: true },
+      {
+        label: options.labels.clear,
+        disabled: !options.canClear,
+        action: options.clear,
+      },
+    ],
+  };
+}
+
 export function createDataGridColumnContextMenuItems(options: {
   headerColumn: boolean;
   contextColumn: boolean;
@@ -111,6 +150,7 @@ export function createDataGridColumnContextMenuItems(options: {
     showAllColumnsMenu: () => void;
   };
   filterSubmenu: DataGridContextMenuItem;
+  highlightSubmenu?: DataGridContextMenuItem;
 }): DataGridContextMenuItem[] {
   const items: DataGridContextMenuItem[] = [];
   if (options.headerColumn) {
@@ -118,6 +158,7 @@ export function createDataGridColumnContextMenuItems(options: {
     items.push({ label: options.labels.copyNames, action: options.actions.copyNames, icon: options.icons.copy });
     items.push({ label: options.labels.details, action: options.actions.details, icon: options.icons.columnDetails });
     if (options.canCopyAlterSql) items.push({ label: options.labels.copyAlterSql, action: options.actions.copyAlterSql, icon: options.icons.copy });
+    if (options.highlightSubmenu) items.push({ label: "", separator: true }, options.highlightSubmenu);
   }
   if (!options.contextColumn && !options.headerColumn) return items;
   if (options.contextColumn) {
@@ -131,6 +172,7 @@ export function createDataGridColumnContextMenuItems(options: {
     items.push({ label: options.labels.localAscending, action: () => options.actions.sort("asc", "local"), icon: options.icons.ascending }, { label: options.labels.localDescending, action: () => options.actions.sort("desc", "local"), icon: options.icons.descending });
     if (options.hasSort) items.push({ label: options.labels.clearSort, action: () => options.actions.sort(null, options.sortMode), icon: options.icons.clearSort });
     if (options.canFilter) items.push({ label: "", separator: true }, options.filterSubmenu);
+    if (!options.headerColumn && options.highlightSubmenu) items.push({ label: "", separator: true }, options.highlightSubmenu);
   }
   if (options.contextVisibleColIdx !== undefined) {
     items.push({ label: "", separator: true });

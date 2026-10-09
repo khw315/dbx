@@ -125,6 +125,9 @@ import {
   SIDEBAR_INDENT_MAX,
   SIDEBAR_FONT_SIZE_MIN,
   SIDEBAR_FONT_SIZE_MAX,
+  SIDEBAR_DENSITIES,
+  isSidebarDensity,
+  type SidebarDensity,
 } from "@/stores/settingsStore";
 import { EDITOR_FONT_FAMILY_CSS_VAR, EDITOR_FONT_SIZE_CSS_VAR, createRunStatementButtonDom, loadEditorTheme, editorFontTheme } from "@/lib/editor/editorThemes";
 import { orderAiConfigsForDisplay } from "@/lib/ai/aiConfigOrdering";
@@ -766,6 +769,8 @@ const editDataGridAutoTransposeSingleRow = ref(settingsStore.editorSettings.data
 const editDataGridCellDetailButtonVisible = ref(settingsStore.editorSettings.dataGridCellDetailButtonVisible);
 const editDataGridCellDetailDialogDefault = ref(settingsStore.editorSettings.dataGridCellDetailDialogDefault);
 const editDataGridCrosshairHighlight = ref(settingsStore.editorSettings.dataGridCrosshairHighlight);
+const editDataGridCrosshairRowBg = ref(settingsStore.editorSettings.dataGridCrosshairRowBg);
+const editDataGridCrosshairColBg = ref(settingsStore.editorSettings.dataGridCrosshairColBg);
 const editDataGridStripedRows = ref(settingsStore.editorSettings.dataGridStripedRows);
 const editDataGridZebraRowBg = ref(settingsStore.editorSettings.dataGridZebraRowBg);
 const editPageSize = ref(settingsStore.editorSettings.pageSize);
@@ -908,6 +913,7 @@ const editSidebarAllowHorizontalScroll = ref(settingsStore.editorSettings.sideba
 const editSidebarShowTooltips = ref(settingsStore.editorSettings.sidebarShowTooltips);
 const editSidebarIndent = ref(settingsStore.editorSettings.sidebarIndent);
 const editSidebarFontSize = ref(settingsStore.editorSettings.sidebarFontSize);
+const editSidebarDensity = ref<SidebarDensity>(settingsStore.editorSettings.sidebarDensity);
 const editExportBatchSize = ref(settingsStore.editorSettings.exportBatchSize);
 const editPreferredExportPath = ref(settingsStore.editorSettings.preferredExportPath);
 const editAutoOpenExportFolder = ref(settingsStore.editorSettings.autoOpenExportFolder);
@@ -1135,6 +1141,8 @@ function currentEditorSettingsDraft(): EditorSettingsDraft {
     dataGridCellDetailButtonVisible: editDataGridCellDetailButtonVisible.value,
     dataGridCellDetailDialogDefault: editDataGridCellDetailDialogDefault.value,
     dataGridCrosshairHighlight: editDataGridCrosshairHighlight.value,
+    dataGridCrosshairRowBg: editDataGridCrosshairRowBg.value,
+    dataGridCrosshairColBg: editDataGridCrosshairColBg.value,
     dataGridStripedRows: editDataGridStripedRows.value,
     dataGridZebraRowBg: editDataGridZebraRowBg.value,
     flatteningMultiLineText: editFlatteningMultiLineText.value,
@@ -1188,6 +1196,7 @@ function currentEditorSettingsDraft(): EditorSettingsDraft {
     sidebarShowTooltips: editSidebarShowTooltips.value,
     sidebarIndent: editSidebarIndent.value,
     sidebarFontSize: editSidebarFontSize.value,
+    sidebarDensity: editSidebarDensity.value,
     sidebarHiddenTablePrefixes: normalizeSidebarHiddenTablePrefixes(editSidebarHiddenTablePrefixes.value),
     sidebarCopyTableNameSeparator: editSidebarCopyTableNameSeparator.value,
     sidebarCopyTableNameIncludeSchema: editSidebarCopyTableNameIncludeSchema.value,
@@ -1819,6 +1828,8 @@ function syncEditorSettingsDraftFromStore() {
   editDataGridCellDetailButtonVisible.value = settingsStore.editorSettings.dataGridCellDetailButtonVisible;
   editDataGridCellDetailDialogDefault.value = settingsStore.editorSettings.dataGridCellDetailDialogDefault;
   editDataGridCrosshairHighlight.value = settingsStore.editorSettings.dataGridCrosshairHighlight;
+  editDataGridCrosshairRowBg.value = settingsStore.editorSettings.dataGridCrosshairRowBg;
+  editDataGridCrosshairColBg.value = settingsStore.editorSettings.dataGridCrosshairColBg;
   editDataGridStripedRows.value = settingsStore.editorSettings.dataGridStripedRows;
   editDataGridZebraRowBg.value = settingsStore.editorSettings.dataGridZebraRowBg;
   editFlatteningMultiLineText.value = settingsStore.editorSettings.flatteningMultiLineText;
@@ -1877,6 +1888,7 @@ function syncEditorSettingsDraftFromStore() {
   editSidebarShowTooltips.value = settingsStore.editorSettings.sidebarShowTooltips;
   editSidebarIndent.value = settingsStore.editorSettings.sidebarIndent;
   editSidebarFontSize.value = settingsStore.editorSettings.sidebarFontSize;
+  editSidebarDensity.value = settingsStore.editorSettings.sidebarDensity;
   editExportBatchSize.value = settingsStore.editorSettings.exportBatchSize;
   editPreferredExportPath.value = settingsStore.editorSettings.preferredExportPath;
   editAutoOpenExportFolder.value = settingsStore.editorSettings.autoOpenExportFolder;
@@ -1978,6 +1990,8 @@ const editorSettingsDraftRefs: EditorSettingsDraftRefMap = {
   dataGridCellDetailButtonVisible: editDataGridCellDetailButtonVisible,
   dataGridCellDetailDialogDefault: editDataGridCellDetailDialogDefault,
   dataGridCrosshairHighlight: editDataGridCrosshairHighlight,
+  dataGridCrosshairRowBg: editDataGridCrosshairRowBg,
+  dataGridCrosshairColBg: editDataGridCrosshairColBg,
   dataGridStripedRows: editDataGridStripedRows,
   dataGridZebraRowBg: editDataGridZebraRowBg,
   pageSize: editPageSize,
@@ -2029,6 +2043,7 @@ const editorSettingsDraftRefs: EditorSettingsDraftRefMap = {
   sidebarShowTooltips: editSidebarShowTooltips,
   sidebarIndent: editSidebarIndent,
   sidebarFontSize: editSidebarFontSize,
+  sidebarDensity: editSidebarDensity,
   sidebarHiddenTablePrefixes: editSidebarHiddenTablePrefixes,
   sidebarCopyTableNameSeparator: editSidebarCopyTableNameSeparator,
   sidebarCopyTableNameIncludeSchema: editSidebarCopyTableNameIncludeSchema,
@@ -2545,6 +2560,7 @@ function resetDefaultsForTab(tab: SettingsCategory) {
     editSidebarShowTooltips.value = DEFAULT_EDITOR_SETTINGS.sidebarShowTooltips;
     editSidebarIndent.value = DEFAULT_EDITOR_SETTINGS.sidebarIndent;
     editSidebarFontSize.value = DEFAULT_EDITOR_SETTINGS.sidebarFontSize;
+    editSidebarDensity.value = DEFAULT_EDITOR_SETTINGS.sidebarDensity;
     editSidebarHiddenTablePrefixes.value = DEFAULT_EDITOR_SETTINGS.sidebarHiddenTablePrefixes.join("\n");
     editSidebarCopyTableNameSeparator.value = DEFAULT_EDITOR_SETTINGS.sidebarCopyTableNameSeparator;
     editSidebarCopyTableNameIncludeSchema.value = DEFAULT_EDITOR_SETTINGS.sidebarCopyTableNameIncludeSchema;
@@ -2576,6 +2592,8 @@ function resetDefaultsForTab(tab: SettingsCategory) {
     editDataGridCellDetailButtonVisible.value = DEFAULT_EDITOR_SETTINGS.dataGridCellDetailButtonVisible;
     editDataGridCellDetailDialogDefault.value = DEFAULT_EDITOR_SETTINGS.dataGridCellDetailDialogDefault;
     editDataGridCrosshairHighlight.value = DEFAULT_EDITOR_SETTINGS.dataGridCrosshairHighlight;
+    editDataGridCrosshairRowBg.value = DEFAULT_EDITOR_SETTINGS.dataGridCrosshairRowBg;
+    editDataGridCrosshairColBg.value = DEFAULT_EDITOR_SETTINGS.dataGridCrosshairColBg;
     editDataGridStripedRows.value = DEFAULT_EDITOR_SETTINGS.dataGridStripedRows;
     editDataGridZebraRowBg.value = DEFAULT_EDITOR_SETTINGS.dataGridZebraRowBg;
     editFlatteningMultiLineText.value = DEFAULT_EDITOR_SETTINGS.flatteningMultiLineText;
@@ -2701,6 +2719,8 @@ function resetAllDefaults() {
   editDataGridCellDetailButtonVisible.value = DEFAULT_EDITOR_SETTINGS.dataGridCellDetailButtonVisible;
   editDataGridCellDetailDialogDefault.value = DEFAULT_EDITOR_SETTINGS.dataGridCellDetailDialogDefault;
   editDataGridCrosshairHighlight.value = DEFAULT_EDITOR_SETTINGS.dataGridCrosshairHighlight;
+  editDataGridCrosshairRowBg.value = DEFAULT_EDITOR_SETTINGS.dataGridCrosshairRowBg;
+  editDataGridCrosshairColBg.value = DEFAULT_EDITOR_SETTINGS.dataGridCrosshairColBg;
   editDataGridStripedRows.value = DEFAULT_EDITOR_SETTINGS.dataGridStripedRows;
   editDataGridZebraRowBg.value = DEFAULT_EDITOR_SETTINGS.dataGridZebraRowBg;
   editFlatteningMultiLineText.value = DEFAULT_EDITOR_SETTINGS.flatteningMultiLineText;
@@ -2753,6 +2773,7 @@ function resetAllDefaults() {
   editSidebarShowTooltips.value = DEFAULT_EDITOR_SETTINGS.sidebarShowTooltips;
   editSidebarIndent.value = DEFAULT_EDITOR_SETTINGS.sidebarIndent;
   editSidebarFontSize.value = DEFAULT_EDITOR_SETTINGS.sidebarFontSize;
+  editSidebarDensity.value = DEFAULT_EDITOR_SETTINGS.sidebarDensity;
   editSidebarHiddenTablePrefixes.value = DEFAULT_EDITOR_SETTINGS.sidebarHiddenTablePrefixes.join("\n");
   editSidebarCopyTableNameSeparator.value = DEFAULT_EDITOR_SETTINGS.sidebarCopyTableNameSeparator;
   editSidebarCopyTableNameIncludeSchema.value = DEFAULT_EDITOR_SETTINGS.sidebarCopyTableNameIncludeSchema;
@@ -3825,6 +3846,7 @@ async function commitMcpPolicyDraft(): Promise<void> {
     await settingsStore.updateMcpGlobalPolicy({
       readOnly: snapshot.readOnly,
       allowDangerousSql: snapshot.allowDangerousSql,
+      promptHighRiskSql: snapshot.promptHighRiskSql,
       allowedConnectionIds: snapshot.allowedConnectionIds,
       allowedGroupIds: snapshot.allowedGroupIds,
       allowedToolNames: snapshot.allowedToolNames,
@@ -3843,7 +3865,7 @@ function onMcpExecutionModeChange(mode: McpExecutionMode) {
   if (mode === "high_risk_write" && !window.confirm(t("settings.mcpExecutionModeHighRiskConfirm"))) {
     return;
   }
-  stageMcpPolicy(mcpPolicyFieldsForExecutionMode(mode));
+  stageMcpPolicy({ ...mcpPolicyFieldsForExecutionMode(mode), promptHighRiskSql: mode === "safe_write" && mcpPolicyDraft.value.promptHighRiskSql });
 }
 
 function onMcpExecutionModeKeydown(event: KeyboardEvent, mode: McpExecutionMode) {
@@ -4432,6 +4454,7 @@ const webdavPassword = ref("");
 const webdavRememberPassword = ref(localStorage.getItem("dbx-webdav-remember-password") === "true");
 const webdavHasSavedPassword = ref(false);
 const webdavRemotePath = ref(localStorage.getItem("dbx-webdav-remote-path") || DEFAULT_WEB_DAV_REMOTE_PATH);
+const webdavUserAgent = ref(localStorage.getItem("dbx-webdav-user-agent") || "");
 const webdavSyncSecrets = ref(false);
 const webdavSecretsPassphrase = ref("");
 const webdavHasSavedSecretsPassphrase = ref(false);
@@ -4671,6 +4694,7 @@ function currentWebDavConfig(): WebDavConfig {
     username: webdavUsername.value.trim() || undefined,
     password: webdavPassword.value || undefined,
     remotePath: webdavRemotePath.value.trim() || DEFAULT_WEB_DAV_REMOTE_PATH,
+    userAgent: webdavUserAgent.value.trim() || undefined,
   };
 }
 
@@ -8308,6 +8332,31 @@ onUnmounted(() => {
                   "
                 />
               </div>
+              <div class="settings-item flex items-center justify-between gap-4 rounded-md border bg-muted/20 px-3 py-2">
+                <div class="space-y-1">
+                  <Label for="sidebar-density">{{ t("settings.sidebarDensity") }}</Label>
+                  <p class="text-xs text-muted-foreground">
+                    {{ t("settings.sidebarDensityDescription") }}
+                  </p>
+                </div>
+                <Select
+                  :model-value="editSidebarDensity"
+                  @update:model-value="
+                    (value) => {
+                      if (isSidebarDensity(value)) editSidebarDensity = value;
+                    }
+                  "
+                >
+                  <SelectTrigger id="sidebar-density" class="h-8 w-36 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent position="popper" align="end">
+                    <SelectItem v-for="density in SIDEBAR_DENSITIES" :key="density" :value="density" class="text-xs">
+                      {{ t(`settings.sidebarDensity_${density}`) }}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
               <div class="space-y-2">
                 <Label for="sidebar-hidden-table-prefixes">{{ t("settings.sidebarHiddenTablePrefixes") }}</Label>
                 <textarea
@@ -8922,7 +8971,37 @@ onUnmounted(() => {
                       {{ t("settings.dataGridCrosshairHighlightDescription") }}
                     </p>
                   </div>
-                  <Switch id="data-grid-crosshair-highlight" v-model="editDataGridCrosshairHighlight" />
+                  <div class="flex items-center gap-3">
+                    <div v-if="editDataGridCrosshairHighlight" class="flex flex-wrap items-center gap-2.5">
+                      <div class="flex items-center gap-1.5">
+                        <Label for="data-grid-crosshair-row-bg" class="text-xs text-muted-foreground">{{ t("settings.dataGridCrosshairRowBg") }}</Label>
+                        <input
+                          id="data-grid-crosshair-row-bg"
+                          type="color"
+                          class="h-6 w-8 shrink-0 cursor-pointer rounded border border-border bg-transparent p-0.5"
+                          :value="editDataGridCrosshairRowBg || (isDark ? '#4b5462' : '#aec3e0')"
+                          @input="editDataGridCrosshairRowBg = ($event.target as HTMLInputElement).value"
+                        />
+                        <Button v-if="editDataGridCrosshairRowBg" type="button" variant="ghost" size="sm" class="h-6 px-1 text-[11px] text-muted-foreground hover:text-foreground" @click="editDataGridCrosshairRowBg = ''">
+                          {{ t("settings.reset") }}
+                        </Button>
+                      </div>
+                      <div class="flex items-center gap-1.5">
+                        <Label for="data-grid-crosshair-col-bg" class="text-xs text-muted-foreground">{{ t("settings.dataGridCrosshairColBg") }}</Label>
+                        <input
+                          id="data-grid-crosshair-col-bg"
+                          type="color"
+                          class="h-6 w-8 shrink-0 cursor-pointer rounded border border-border bg-transparent p-0.5"
+                          :value="editDataGridCrosshairColBg || (isDark ? '#626f82' : '#8eaad2')"
+                          @input="editDataGridCrosshairColBg = ($event.target as HTMLInputElement).value"
+                        />
+                        <Button v-if="editDataGridCrosshairColBg" type="button" variant="ghost" size="sm" class="h-6 px-1 text-[11px] text-muted-foreground hover:text-foreground" @click="editDataGridCrosshairColBg = ''">
+                          {{ t("settings.reset") }}
+                        </Button>
+                      </div>
+                    </div>
+                    <Switch id="data-grid-crosshair-highlight" v-model="editDataGridCrosshairHighlight" />
+                  </div>
                 </div>
                 <div class="settings-item flex items-center justify-between gap-4 rounded-md border bg-muted/20 px-3 py-2">
                   <div class="space-y-1">
@@ -9782,6 +9861,13 @@ LIMIT 100;</pre
                         {{ t("settings.syncRemotePathDescription") }}
                       </p>
                     </div>
+                    <div class="space-y-2 md:col-span-2">
+                      <Label for="webdav-user-agent">{{ t("settings.syncUserAgent") }}</Label>
+                      <Input id="webdav-user-agent" v-model="webdavUserAgent" autocomplete="off" placeholder="Zotero/10.0.0" />
+                      <p class="text-xs text-muted-foreground">
+                        {{ t("settings.syncUserAgentDescription") }}
+                      </p>
+                    </div>
                     <div class="settings-item space-y-2 md:col-span-2 rounded-md border bg-muted/20 px-3 py-3">
                       <label class="flex items-center gap-2 text-xs">
                         <input v-model="webdavAutoUploadEnabled" type="checkbox" class="h-4 w-4 shrink-0 accent-primary" />
@@ -10263,6 +10349,15 @@ LIMIT 100;</pre
                       <FolderOpen class="h-3.5 w-3.5" />
                     </Button>
                   </div>
+                </div>
+                <!-- Default off: a skill listing rides in every request once this is
+                     on, even with nothing selected (prd 09-30 Req 5). -->
+                <div class="settings-item flex items-center justify-between gap-4 rounded-md border bg-muted/20 px-3 py-2">
+                  <div class="space-y-1">
+                    <Label for="ai-skill-auto-enabled">{{ t("settings.aiSkillAutoEnabled") }}</Label>
+                    <p class="text-xs text-muted-foreground">{{ t("settings.aiSkillAutoEnabledDesc") }}</p>
+                  </div>
+                  <Switch id="ai-skill-auto-enabled" :model-value="settingsStore.desktopSettings.custom_ai_skill_auto_enabled === true" @update:model-value="(value) => settingsStore.updateDesktopSettings({ custom_ai_skill_auto_enabled: Boolean(value) })" />
                 </div>
               </div>
 
@@ -11168,6 +11263,10 @@ LIMIT 100;</pre
                             </Button>
                           </div>
                           <p class="text-[11px] text-muted-foreground">{{ t("settings.mcpPermissionGlobalDefaultHint") }}</p>
+                          <label class="flex items-center gap-2 text-xs">
+                            <input type="checkbox" :checked="mcpPolicyDraft.promptHighRiskSql" :disabled="mcpPolicyControlsDisabled || mcpExecutionMode !== 'safe_write'" @change="stageMcpPolicy({ promptHighRiskSql: ($event.target as HTMLInputElement).checked })" />
+                            {{ t("settings.mcpPromptHighRiskSql") }}
+                          </label>
                           <div class="space-y-2 border-t border-border/60 pt-3">
                             <div>
                               <p class="text-xs font-medium">{{ t("settings.mcpCapabilityTitle") }}</p>

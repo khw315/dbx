@@ -167,6 +167,8 @@ function save() {
             </Select>
           </div>
 
+          <p v-if="draftExtractor === 'raw'" class="text-xs text-muted-foreground">{{ t("grid.copyExtractorRawHint") }}</p>
+
           <template v-if="isDsv">
             <div v-if="draftExtractor === 'dsv'" class="space-y-1.5">
               <Label>{{ t("grid.copyExtractorColumnSeparator") }}</Label>
@@ -211,9 +213,7 @@ function save() {
             <label v-if="draftExtractor === 'sql-inserts'" class="flex items-center gap-2 text-sm"
               ><input type="checkbox" :checked="draftOptions.sql.excludePrimaryKeysFromInsert" @change="updateSql('excludePrimaryKeysFromInsert', ($event.target as HTMLInputElement).checked)" />{{ t("grid.copyExtractorExcludePrimaryKeys") }}</label
             >
-            <label v-if="draftExtractor === 'sql-inserts'" class="flex items-center gap-2 text-sm"
-              ><input type="checkbox" :checked="draftOptions.sql.includeDatabaseName" @change="updateSql('includeDatabaseName', ($event.target as HTMLInputElement).checked)" />{{ t("grid.copyExtractorIncludeDatabaseName") }}</label
-            >
+            <label class="flex items-center gap-2 text-sm"><input type="checkbox" :checked="draftOptions.sql.includeDatabaseName" @change="updateSql('includeDatabaseName', ($event.target as HTMLInputElement).checked)" />{{ t("grid.copyExtractorIncludeDatabaseName") }}</label>
             <div v-if="draftExtractor === 'sql-inserts'" class="space-y-1.5">
               <label class="flex items-center gap-2 text-sm"><input type="checkbox" :checked="draftOptions.sql.quoteIdentifiers" @change="updateSql('quoteIdentifiers', ($event.target as HTMLInputElement).checked)" />{{ t("grid.copyExtractorQuoteIdentifiers") }}</label>
               <Label>{{ t("grid.copyExtractorTemporalFormat") }}</Label>

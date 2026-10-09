@@ -79,12 +79,16 @@ export interface DesktopSettings {
   agent_store_dir?: string | null;
   custom_ai_skill_root_enabled?: boolean | null;
   custom_ai_skill_root?: string | null;
+  /** "Allow the AI to use skills automatically" (prd 09-30 Req 5): the built-in
+   *  AI then receives the skill listing even with nothing selected. Default off. */
+  custom_ai_skill_auto_enabled?: boolean | null;
   sidebar_table_page_size?: number | null;
 }
 
 export interface McpGlobalPolicy {
   readOnly: boolean;
   allowDangerousSql: boolean;
+  promptHighRiskSql: boolean;
   allowedConnectionIds: string[] | null;
   allowedGroupIds: string[];
   allowedToolNames: string[] | null;
@@ -159,12 +163,14 @@ export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   agent_store_dir: null,
   custom_ai_skill_root_enabled: false,
   custom_ai_skill_root: null,
+  custom_ai_skill_auto_enabled: false,
   sidebar_table_page_size: DEFAULT_SIDEBAR_TABLE_PAGE_SIZE,
 };
 
 export const DEFAULT_MCP_GLOBAL_POLICY: McpGlobalPolicy = {
   readOnly: false,
   allowDangerousSql: false,
+  promptHighRiskSql: false,
   allowedConnectionIds: null,
   allowedGroupIds: [],
   allowedToolNames: null,
@@ -236,6 +242,7 @@ export function normalizeMcpGlobalPolicy(policy: Partial<McpGlobalPolicy> | null
   return {
     readOnly: policy?.readOnly === true,
     allowDangerousSql: policy?.allowDangerousSql === true,
+    promptHighRiskSql: policy?.promptHighRiskSql === true,
     allowedConnectionIds,
     allowedGroupIds,
     allowedToolNames,
@@ -264,6 +271,7 @@ export function normalizeDesktopSettings(settings: Partial<DesktopSettings> | nu
     agent_store_dir: settings?.agent_store_dir?.trim() || DEFAULT_DESKTOP_SETTINGS.agent_store_dir,
     custom_ai_skill_root_enabled: settings?.custom_ai_skill_root_enabled ?? DEFAULT_DESKTOP_SETTINGS.custom_ai_skill_root_enabled,
     custom_ai_skill_root: settings?.custom_ai_skill_root?.trim() || DEFAULT_DESKTOP_SETTINGS.custom_ai_skill_root,
+    custom_ai_skill_auto_enabled: settings?.custom_ai_skill_auto_enabled ?? DEFAULT_DESKTOP_SETTINGS.custom_ai_skill_auto_enabled,
     sidebar_table_page_size: sidebarTablePageSize,
   };
 }
@@ -568,6 +576,21 @@ export const AI_PROVIDER_PARTNER_PRESETS: readonly AiPartnerProviderPreset[] = [
     descriptionKey: "ai.hualongDescription",
     badgeKey: "ai.hualongSponsored",
   },
+  {
+    id: "astraflow",
+    label: "AstraFlow",
+    iconPath: "/icons/ai/astraflow.png",
+    group: "partner",
+    provider: "openai-compatible",
+    endpoint: "https://api.modelverse.cn/v1",
+    model: "",
+    apiStyle: "completions",
+    authMethod: "bearer",
+    requiresApiKey: true,
+    websiteUrl: "https://www.ucloud.cn/site/active/kuaijiesale.html?ytag=geo_waituo_github_dbx",
+    apiKeyUrl: "https://console.ucloud.cn/modelverse/experience/api-keys",
+    descriptionKey: "ai.astraflowDescription",
+  },
 ];
 
 function normalizeAiProviderEndpoint(endpoint: string): string {
@@ -723,6 +746,12 @@ const STRUCTURE_EDITOR_DENSITIES = ["compact", "standard", "comfortable"] as con
 export type StructureEditorDensity = (typeof STRUCTURE_EDITOR_DENSITIES)[number];
 const COLUMN_WIDTH_DENSITIES = ["compact", "standard", "comfortable"] as const;
 export type ColumnWidthDensity = (typeof COLUMN_WIDTH_DENSITIES)[number];
+export const SIDEBAR_DENSITIES = ["default", "compact"] as const;
+export type SidebarDensity = (typeof SIDEBAR_DENSITIES)[number];
+
+export function isSidebarDensity(value: unknown): value is SidebarDensity {
+  return typeof value === "string" && (SIDEBAR_DENSITIES as readonly string[]).includes(value);
+}
 const DATA_GRID_COLUMN_WIDTH_MODES = ["fill", "content"] as const;
 export type DataGridColumnWidthMode = (typeof DATA_GRID_COLUMN_WIDTH_MODES)[number];
 const CELL_DETAIL_PANEL_LAYOUTS = ["bottom", "right"] as const;
@@ -1021,6 +1050,8 @@ export interface EditorSettings {
   dataGridCellDetailButtonVisible: boolean;
   dataGridCellDetailDialogDefault: boolean;
   dataGridCrosshairHighlight: boolean;
+  dataGridCrosshairRowBg: string;
+  dataGridCrosshairColBg: string;
   dataGridStripedRows: boolean;
   dataGridZebraRowBg: string;
   dataGridMultiRowTranspose: boolean;
@@ -1085,6 +1116,7 @@ export interface EditorSettings {
   sidebarAllowHorizontalScroll: boolean;
   sidebarIndent: number;
   sidebarFontSize: number;
+  sidebarDensity: SidebarDensity;
   columnFormatters: Record<string, ColumnFormatterConfig>;
   customColumnFormatters: Record<string, CustomColumnFormatterConfig>;
   globalDateTimeDisplayFormat: string;
@@ -1340,6 +1372,8 @@ export const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
   dataGridCellDetailButtonVisible: true,
   dataGridCellDetailDialogDefault: false,
   dataGridCrosshairHighlight: false,
+  dataGridCrosshairRowBg: "",
+  dataGridCrosshairColBg: "",
   dataGridStripedRows: true,
   dataGridZebraRowBg: "",
   dataGridMultiRowTranspose: false,
@@ -1400,6 +1434,7 @@ export const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
   sidebarAllowHorizontalScroll: false,
   sidebarIndent: SIDEBAR_INDENT_DEFAULT,
   sidebarFontSize: SIDEBAR_FONT_SIZE_DEFAULT,
+  sidebarDensity: "default",
   columnFormatters: {},
   customColumnFormatters: {},
   globalDateTimeDisplayFormat: "",
@@ -1580,6 +1615,10 @@ function normalizeSidebarFontSize(value: unknown): number {
 function normalizeSidebarIndent(value: unknown): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return SIDEBAR_INDENT_DEFAULT;
   return Math.min(SIDEBAR_INDENT_MAX, Math.max(SIDEBAR_INDENT_MIN, Math.round(value)));
+}
+
+function normalizeSidebarDensity(value: unknown): SidebarDensity {
+  return isSidebarDensity(value) ? value : DEFAULT_EDITOR_SETTINGS.sidebarDensity;
 }
 
 function normalizeUpdateDownloadSource(value: unknown): UpdateDownloadSource {
@@ -1803,7 +1842,14 @@ export function normalizeEditorSettings(settings: Partial<EditorSettings>, exist
   const savedExtractorMigrationVersion = settings.dataGridExtractorOptionsMigrationVersion;
   const normalizedExtractorOptions = normalizeDataGridExtractorOptions(settings.dataGridExtractorOptions);
   const isLegacyExtractorOptions = typeof savedExtractorMigrationVersion !== "number" || savedExtractorMigrationVersion < DATA_GRID_EXTRACTOR_OPTIONS_MIGRATION_VERSION;
-  const dataGridExtractorOptions = isLegacyExtractorOptions && normalizedExtractorOptions.dsv.nullText === "NULL" ? { ...normalizedExtractorOptions, dsv: { ...normalizedExtractorOptions.dsv, nullText: "" } } : normalizedExtractorOptions;
+  const dataGridExtractorOptions = (() => {
+    if (!isLegacyExtractorOptions) return normalizedExtractorOptions;
+    // v1：旧的 "NULL" 文本迁移为空串
+    const nullTextMigrated = normalizedExtractorOptions.dsv.nullText === "NULL" ? { ...normalizedExtractorOptions, dsv: { ...normalizedExtractorOptions.dsv, nullText: "" } } : normalizedExtractorOptions;
+    // v2：复制/导出 SQL 的「包含数据库名称」改为由提取器勾选框决定且默认关闭，
+    // 历史持久化的 true 一并归位到新默认（想带库名/模式名的用户重新勾选即可）
+    return nullTextMigrated.sql.includeDatabaseName ? { ...nullTextMigrated, sql: { ...nullTextMigrated.sql, includeDatabaseName: false } } : nullTextMigrated;
+  })();
   // Preserve the explicit intent behind the legacy update controls. Disabling
   // update reminders was a full opt-out; disabling automatic downloads only
   // opted out of downloading the DBX package itself.
@@ -1967,6 +2013,8 @@ export function normalizeEditorSettings(settings: Partial<EditorSettings>, exist
     dataGridCellDetailButtonVisible: typeof settings.dataGridCellDetailButtonVisible === "boolean" ? settings.dataGridCellDetailButtonVisible : DEFAULT_EDITOR_SETTINGS.dataGridCellDetailButtonVisible,
     dataGridCellDetailDialogDefault: settings.dataGridCellDetailDialogDefault === true,
     dataGridCrosshairHighlight: typeof settings.dataGridCrosshairHighlight === "boolean" ? settings.dataGridCrosshairHighlight : DEFAULT_EDITOR_SETTINGS.dataGridCrosshairHighlight,
+    dataGridCrosshairRowBg: typeof settings.dataGridCrosshairRowBg === "string" ? settings.dataGridCrosshairRowBg.trim() : DEFAULT_EDITOR_SETTINGS.dataGridCrosshairRowBg,
+    dataGridCrosshairColBg: typeof settings.dataGridCrosshairColBg === "string" ? settings.dataGridCrosshairColBg.trim() : DEFAULT_EDITOR_SETTINGS.dataGridCrosshairColBg,
     dataGridStripedRows: typeof settings.dataGridStripedRows === "boolean" ? settings.dataGridStripedRows : DEFAULT_EDITOR_SETTINGS.dataGridStripedRows,
     dataGridZebraRowBg: typeof settings.dataGridZebraRowBg === "string" ? settings.dataGridZebraRowBg.trim() : DEFAULT_EDITOR_SETTINGS.dataGridZebraRowBg,
     dataGridMultiRowTranspose: settings.dataGridMultiRowTranspose === true,
@@ -2074,6 +2122,7 @@ export function normalizeEditorSettings(settings: Partial<EditorSettings>, exist
     sidebarAllowHorizontalScroll: settings.sidebarAllowHorizontalScroll ?? DEFAULT_EDITOR_SETTINGS.sidebarAllowHorizontalScroll,
     sidebarIndent: normalizeSidebarIndent(settings.sidebarIndent),
     sidebarFontSize: normalizeSidebarFontSize(settings.sidebarFontSize),
+    sidebarDensity: normalizeSidebarDensity(settings.sidebarDensity),
     columnFormatters: normalizeColumnFormatters(settings.columnFormatters),
     customColumnFormatters: normalizeCustomColumnFormatters(settings.customColumnFormatters),
     globalDateTimeDisplayFormat: normalizeGlobalDateTimePattern(settings.globalDateTimeDisplayFormat),
@@ -2322,7 +2371,12 @@ export const useSettingsStore = defineStore("settings", () => {
           const needsWelcomePageDefaultMigration = typeof savedSettings.welcomePageModeDefaultVersion !== "number" || savedSettings.welcomePageModeDefaultVersion < WELCOME_PAGE_DEFAULT_VERSION;
           const needsTabNavigationShortcutMigration = needsTabNavigationHistoryShortcutMigration(savedSettings.shortcuts);
           const savedNullText = (savedSettings.dataGridExtractorOptions as Partial<DataGridExtractorOptions> | undefined)?.dsv?.nullText;
-          const needsDataGridExtractorOptionsMigration = (typeof savedSettings.dataGridExtractorOptionsMigrationVersion !== "number" || savedSettings.dataGridExtractorOptionsMigrationVersion < DATA_GRID_EXTRACTOR_OPTIONS_MIGRATION_VERSION) && savedNullText === "NULL";
+          // v2 also resets a historically persisted includeDatabaseName=true, so
+          // trigger the eager persist for that stale disk value even when the
+          // v1 "NULL" marker is already migrated away.
+          const savedSqlIncludeDatabaseName = (savedSettings.dataGridExtractorOptions as Partial<DataGridExtractorOptions> | undefined)?.sql?.includeDatabaseName;
+          const needsDataGridExtractorOptionsMigration =
+            (typeof savedSettings.dataGridExtractorOptionsMigrationVersion !== "number" || savedSettings.dataGridExtractorOptionsMigrationVersion < DATA_GRID_EXTRACTOR_OPTIONS_MIGRATION_VERSION) && (savedNullText === "NULL" || savedSqlIncludeDatabaseName === true);
           const savedUpdateDownloadSource = (saved as { updateDownloadSource?: unknown }).updateDownloadSource;
           if (savedUpdateDownloadSource === "atomgit" || needsExecuteModeDefaultMigration || needsWelcomePageDefaultMigration || needsTabNavigationShortcutMigration || needsSidebarBrowseObjectsMigration || needsDataGridExtractorOptionsMigration) {
             // Persist one-time migrations so removed or unsafe defaults cannot reappear.
@@ -2398,6 +2452,7 @@ export const useSettingsStore = defineStore("settings", () => {
       await api.saveMcpGlobalPolicy({
         readOnly: next.readOnly,
         allowDangerousSql: next.allowDangerousSql,
+        promptHighRiskSql: next.promptHighRiskSql,
         allowedConnectionIds: next.allowedConnectionIds,
         allowedGroupIds: next.allowedGroupIds,
         allowedToolNames: next.allowedToolNames,
@@ -2840,6 +2895,8 @@ export const useSettingsStore = defineStore("settings", () => {
     if (partial.dataGridCellDetailButtonVisible !== undefined) editorSettings.value.dataGridCellDetailButtonVisible = typeof partial.dataGridCellDetailButtonVisible === "boolean" ? partial.dataGridCellDetailButtonVisible : DEFAULT_EDITOR_SETTINGS.dataGridCellDetailButtonVisible;
     if (partial.dataGridCellDetailDialogDefault !== undefined) editorSettings.value.dataGridCellDetailDialogDefault = partial.dataGridCellDetailDialogDefault === true;
     if (partial.dataGridCrosshairHighlight !== undefined) editorSettings.value.dataGridCrosshairHighlight = typeof partial.dataGridCrosshairHighlight === "boolean" ? partial.dataGridCrosshairHighlight : DEFAULT_EDITOR_SETTINGS.dataGridCrosshairHighlight;
+    if (partial.dataGridCrosshairRowBg !== undefined) editorSettings.value.dataGridCrosshairRowBg = typeof partial.dataGridCrosshairRowBg === "string" ? partial.dataGridCrosshairRowBg.trim() : DEFAULT_EDITOR_SETTINGS.dataGridCrosshairRowBg;
+    if (partial.dataGridCrosshairColBg !== undefined) editorSettings.value.dataGridCrosshairColBg = typeof partial.dataGridCrosshairColBg === "string" ? partial.dataGridCrosshairColBg.trim() : DEFAULT_EDITOR_SETTINGS.dataGridCrosshairColBg;
     if (partial.dataGridStripedRows !== undefined) editorSettings.value.dataGridStripedRows = typeof partial.dataGridStripedRows === "boolean" ? partial.dataGridStripedRows : DEFAULT_EDITOR_SETTINGS.dataGridStripedRows;
     if (partial.dataGridZebraRowBg !== undefined) editorSettings.value.dataGridZebraRowBg = typeof partial.dataGridZebraRowBg === "string" ? partial.dataGridZebraRowBg.trim() : DEFAULT_EDITOR_SETTINGS.dataGridZebraRowBg;
     if (partial.dataGridMultiRowTranspose !== undefined) editorSettings.value.dataGridMultiRowTranspose = partial.dataGridMultiRowTranspose === true;
@@ -2911,6 +2968,7 @@ export const useSettingsStore = defineStore("settings", () => {
     if (partial.sidebarAllowHorizontalScroll !== undefined) editorSettings.value.sidebarAllowHorizontalScroll = partial.sidebarAllowHorizontalScroll;
     if (partial.sidebarIndent !== undefined) editorSettings.value.sidebarIndent = normalizeSidebarIndent(partial.sidebarIndent);
     if (partial.sidebarFontSize !== undefined) editorSettings.value.sidebarFontSize = normalizeSidebarFontSize(partial.sidebarFontSize);
+    if (partial.sidebarDensity !== undefined) editorSettings.value.sidebarDensity = normalizeSidebarDensity(partial.sidebarDensity);
     if (partial.columnFormatters !== undefined) editorSettings.value.columnFormatters = partial.columnFormatters;
     if (partial.customColumnFormatters !== undefined) editorSettings.value.customColumnFormatters = partial.customColumnFormatters;
     if (partial.globalDateTimeDisplayFormat !== undefined) editorSettings.value.globalDateTimeDisplayFormat = normalizeGlobalDateTimePattern(partial.globalDateTimeDisplayFormat);

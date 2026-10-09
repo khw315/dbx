@@ -13,10 +13,12 @@ import AppToolbar from "@/components/layout/AppToolbar.vue";
 import AppTabBar from "@/components/layout/AppTabBar.vue";
 import { createGroupTabBarPortal, GROUP_TAB_BAR_PORTAL } from "@/components/layout/groupTabBarPortal";
 import PluginShortcutBar from "@/components/plugins/PluginShortcutBar.vue";
+import SidebarDangerDialogHost from "@/components/sidebar/SidebarDangerDialogHost.vue";
 import AppSidebar from "@/components/layout/AppSidebar.vue";
 import SqlEditorWorkspace from "@/components/layout/SqlEditorWorkspace.vue";
 import { EDITOR_TOOLBAR_ACTIONS } from "@/components/layout/editorToolbarActions";
 import AppDialogs from "@/components/layout/AppDialogs.vue";
+import McpSqlApprovalDialog from "@/components/mcp/McpSqlApprovalDialog.vue";
 import DetachedTabHeader from "@/components/layout/DetachedTabHeader.vue";
 import WelcomeScreen from "@/components/layout/WelcomeScreen.vue";
 import type { ConfigTab } from "@/components/connection/ConnectionDialog.vue";
@@ -32,6 +34,7 @@ import { useSavedSqlStore } from "@/stores/savedSqlStore";
 import { usePromptTemplateStore } from "@/stores/promptTemplateStore";
 import { useToast } from "@/composables/useToast";
 import { useTheme } from "@/composables/useTheme";
+import { useEditorFontFamilyStyle } from "@/composables/useEditorFontFamilyStyle";
 import { canDownloadAndInstallUpdate, useAppUpdater } from "@/composables/useAppUpdater";
 import { useMcpUpdateBadge } from "@/composables/useMcpUpdateBadge";
 import { useComponentUpdates, type ComponentUpdateCategory } from "@/composables/useComponentUpdates";
@@ -115,6 +118,8 @@ import {
   isBrowserTaskManagerShortcut,
   isCloseOtherTabsShortcut,
   isCloseTabShortcut,
+  isCloseWindowShortcut,
+  isDisconnectAllActiveConnectionsShortcut,
   isEditTableStructureShortcut,
   isExecuteSqlInNewResultTabShortcut,
   isExecuteSqlShortcut,
@@ -234,6 +239,7 @@ const queryStore = useQueryStore();
 const navigationStore = useNavigationStore();
 const settingsStore = useSettingsStore();
 const { active: appBackgroundActive, backgroundObjectUrl: appBackgroundObjectUrl, backgroundImageStyle: appBackgroundImageStyle } = useBackgroundImage(settingsStore);
+const editorFontFamilyStyle = useEditorFontFamilyStyle();
 const { uiFontFamilyPreview } = useUiFontFamilyPreview();
 const savedSqlStore = useSavedSqlStore();
 const promptTemplateStore = usePromptTemplateStore();
@@ -368,11 +374,12 @@ const activeAiRunCount = computed(() => (isDesktop ? activeDesktopAiRuns().lengt
 /** Runs waiting for a write confirmation — the panel-entry badge shows these
  *  with a higher-priority indicator (parent PRD §4 line 71 / §9). */
 const awaitingAiRunCount = computed(() => (isDesktop ? activeDesktopAiRuns().filter((run) => run.status === "awaiting_write_confirmation").length : 0));
-const { mcpUpdateAvailable, refreshMcpUpdateStatus, handleMcpStatusChanged, applyMcpStatus } = useMcpUpdateBadge({
+const { mcpUpdateAvailable, refreshMcpUpdateStatus, handleMcpStatusChanged, applyMcpStatus, invalidateMcpUpdateStatus } = useMcpUpdateBadge({
   isDesktop,
   // Update availability remains visible when every auto-update switch is off;
   // the switches control installation, not whether the user can be reminded.
   updateNotificationsEnabled: () => true,
+  shouldDeferRefresh: () => componentUpdates.updating.value,
 });
 const drawDesktopWindowFrame = shouldDrawDesktopWindowFrame(isMacOS(), isDesktop, isWindows());
 const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
@@ -1434,6 +1441,8 @@ function handleToolbarUpdateClick() {
 function syncToolbarComponentUpdateState() {
   agentDriverUpdateCount.value = componentUpdates.driverUpdateCount.value;
   applyMcpStatus(componentUpdates.mcpUpdateAvailable.value);
+  // 组件更新是权威来源；丢弃轮询期间发出的旧快照，避免其晚返回后重新点亮更新入口。
+  invalidateMcpUpdateStatus();
 }
 
 function handleComponentUpdatesChanged() {
@@ -1484,6 +1493,8 @@ async function consumePendingComponentUpdatesAfterRestart() {
   if (currentVersion && !appVersion.value) appVersion.value = currentVersion;
   const pending = takePendingComponentUpdatesAfterAppRestart(currentVersion);
   if (!pending) return;
+  // 丢弃重启过程中发出的后台 MCP 轮询：它们可能读到升级前快照，晚返回后会覆盖权威结果。
+  invalidateMcpUpdateStatus();
   reportComponentUpdateResult(await runPendingComponentUpdatePlan(pending, componentUpdates));
 }
 
@@ -3399,9 +3410,9 @@ async function changeActiveConnection(tabId: string, connectionId: string) {
     queryStore.updateDatabase(tab.id, database);
     isCurrentTarget = queryStore.createExecutionTargetGuard(tab.id);
     if (tab.externalSqlPath) rememberExternalSqlFileTarget(tab.externalSqlPath, { connectionId, database, catalog: undefined, schema: undefined });
-    if (connection.default_schema || connection.db_type === "oracle") {
+    if (connection.default_schema || connection.db_type === "oracle" || connection.db_type === "oceanbase-oracle") {
       try {
-        // A configured default wins. Otherwise Oracle returns the session's current schema first.
+        // A configured default wins. Otherwise Oracle/OB returns the session's current schema first.
         const orderedSchemas = connection.default_schema ? [] : await api.listSchemas(connectionId, database);
         if (!isCurrentTarget()) return;
         const schema = schemaAfterConnectionSwitch(connection.db_type, orderedSchemas, connection.default_schema);
@@ -4297,6 +4308,24 @@ async function handleKeydown(e: KeyboardEvent) {
     appTabBarRef.value?.closeOtherActiveTabs();
     return;
   }
+  if (isDisconnectAllActiveConnectionsShortcut(e, shortcuts)) {
+    e.preventDefault();
+    e.stopPropagation();
+    void appSidebarRef.value?.disconnectAllActiveConnections();
+    return;
+  }
+  if (isCloseWindowShortcut(e, shortcuts)) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (isDetachedWindowContext) {
+      void requestDetachedReturn("close");
+      return;
+    }
+    if (isDesktop) {
+      void api.requestAppClose();
+    }
+    return;
+  }
   if (isCloseTabShortcut(e, shortcuts)) {
     e.preventDefault();
     await closeActiveSurface();
@@ -4713,6 +4742,7 @@ onUnmounted(() => {
       <div class="h-full w-full" :style="appBackgroundImageStyle"></div>
     </div>
     <TooltipProvider :delay-duration="300">
+      <SidebarDangerDialogHost />
       <div data-app-shell class="h-screen w-screen max-w-full min-w-[760px] min-h-[600px] flex flex-col bg-background text-foreground overflow-hidden" :class="{ 'dbx-desktop-window-frame': drawDesktopWindowFrame }" :style="appUiFontFamilyStyle">
         <AppToolbar
           v-if="!isDetachedWindowContext"
@@ -5365,6 +5395,7 @@ onUnmounted(() => {
         :database-type="queryEditorDdlDatabaseType"
         :dialect="queryEditorDdlDialect"
       />
+      <McpSqlApprovalDialog v-if="isDesktop && !isDetachedWindowContext" />
       <QueryEditorObjectSourceDialog
         v-if="queryEditorObjectSourceTarget"
         v-model:open="showQueryEditorObjectSourceDialog"
@@ -5382,7 +5413,7 @@ onUnmounted(() => {
         @saved="onQueryEditorObjectSourceSaved"
       />
     </TooltipProvider>
-    <div id="dbx-query-editor-tooltip-root" class="fixed left-0 top-0 z-[70] h-0 w-0 overflow-visible" />
+    <div id="dbx-query-editor-tooltip-root" class="fixed left-0 top-0 z-[70] h-0 w-0 overflow-visible" :style="editorFontFamilyStyle" />
   </div>
 </template>
 

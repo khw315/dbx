@@ -1,8 +1,15 @@
-import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
-import { createQueryEditorExecutionViewportOwnership, isQueryEditorPositionVisible } from "../../editor/queryEditorExecutionViewport";
+// @vitest-environment happy-dom
 
-const queryEditorSource = ["QueryEditor.vue", "useQueryEditorExecution.ts"].map((file) => readFileSync(new URL(`../../../components/editor/${file}`, import.meta.url), "utf8")).join("\n");
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { EditorSelection, EditorState } from "@codemirror/state";
+import { EditorView } from "@codemirror/view";
+import { describe, expect, it, vi } from "vitest";
+import { createQueryEditorExecutionViewportOwnership, isQueryEditorPositionVisible, locateCursorForGutterExecution } from "../../editor/queryEditorExecutionViewport";
+
+const specDir = path.dirname(fileURLToPath(import.meta.url));
+const queryEditorSource = ["QueryEditor.vue", "useQueryEditorExecution.ts"].map((file) => readFileSync(path.resolve(specDir, "../../../components/editor", file), "utf8")).join("\n");
 
 describe("QueryEditor execution routing", () => {
   it("routes the execution shortcut through the shared execution-mode contract while bypassing the picker", () => {
@@ -13,11 +20,100 @@ describe("QueryEditor execution routing", () => {
   it("snapshots pre-execution cursor visibility when execution viewport tracking starts", () => {
     expect(queryEditorSource).toContain("beginExecution(cursorVisible)");
   });
+});
+
+describe("QueryEditor gutter execution cursor positioning", () => {
+  function createEditor(doc: string, selection?: { anchor: number; head?: number }): EditorView {
+    return new EditorView({
+      parent: document.createElement("div"),
+      state: EditorState.create({
+        doc,
+        selection: selection ? EditorSelection.single(selection.anchor, selection.head ?? selection.anchor) : undefined,
+      }),
+    });
+  }
 
   it("positions cursor at statement start and focuses editor on gutter execution when enabled", () => {
-    expect(queryEditorSource).toContain("if (settingsStore.editorSettings.locateCursorOnGutterExecute && !selectionOverlapsStatement)");
-    expect(queryEditorSource).toContain("selection: { anchor: statementRange.from, head: statementRange.from }");
-    expect(queryEditorSource).toContain("if (settingsStore.editorSettings.locateCursorOnGutterExecute) {\n    currentView.focus();\n  }");
+    const doc = "select * from users;\nselect * from orders;";
+    const statementRange = { from: 21, to: 42 };
+    const view = createEditor(doc, { anchor: 0 });
+    const focusSpy = vi.spyOn(view, "focus");
+
+    const result = locateCursorForGutterExecution(view, statementRange, true);
+
+    expect(result.selectionOverlapsStatement).toBe(false);
+    expect(result.cursorRelocated).toBe(true);
+    expect(view.state.selection.main.from).toBe(statementRange.from);
+    expect(view.state.selection.main.to).toBe(statementRange.from);
+    expect(view.state.selection.main.empty).toBe(true);
+    expect(focusSpy).toHaveBeenCalledOnce();
+    view.destroy();
+  });
+
+  it("preserves active overlapping selection within statement while focusing editor", () => {
+    const doc = "select * from users;\nselect * from orders;";
+    const statementRange = { from: 21, to: 42 };
+    const view = createEditor(doc, { anchor: 35, head: 41 });
+    const focusSpy = vi.spyOn(view, "focus");
+
+    const result = locateCursorForGutterExecution(view, statementRange, true);
+
+    expect(result.selectionOverlapsStatement).toBe(true);
+    expect(result.cursorRelocated).toBe(false);
+    expect(view.state.selection.main.anchor).toBe(35);
+    expect(view.state.selection.main.head).toBe(41);
+    expect(focusSpy).toHaveBeenCalledOnce();
+    view.destroy();
+  });
+
+  it("relocates cursor when active selection is elsewhere in the document and does not overlap statement", () => {
+    const doc = "select * from users;\nselect * from orders;";
+    const statementRange = { from: 21, to: 42 };
+    const view = createEditor(doc, { anchor: 14, head: 19 });
+    const focusSpy = vi.spyOn(view, "focus");
+
+    const result = locateCursorForGutterExecution(view, statementRange, true);
+
+    expect(result.selectionOverlapsStatement).toBe(false);
+    expect(result.cursorRelocated).toBe(true);
+    expect(view.state.selection.main.from).toBe(statementRange.from);
+    expect(view.state.selection.main.to).toBe(statementRange.from);
+    expect(view.state.selection.main.empty).toBe(true);
+    expect(focusSpy).toHaveBeenCalledOnce();
+    view.destroy();
+  });
+
+  it("does not alter cursor position or focus editor when disabled", () => {
+    const doc = "select * from users;\nselect * from orders;";
+    const statementRange = { from: 21, to: 42 };
+    const view = createEditor(doc, { anchor: 5 });
+    const focusSpy = vi.spyOn(view, "focus");
+
+    const result = locateCursorForGutterExecution(view, statementRange, false);
+
+    expect(result.selectionOverlapsStatement).toBe(false);
+    expect(result.cursorRelocated).toBe(false);
+    expect(view.state.selection.main.from).toBe(5);
+    expect(view.state.selection.main.to).toBe(5);
+    expect(focusSpy).not.toHaveBeenCalled();
+    view.destroy();
+  });
+
+  it("treats whitespace-only selection within statement as non-overlapping and relocates cursor", () => {
+    const doc = "select * from users;\nselect   * from orders;";
+    const statementRange = { from: 21, to: 44 };
+    const view = createEditor(doc, { anchor: 27, head: 30 });
+    const focusSpy = vi.spyOn(view, "focus");
+
+    const result = locateCursorForGutterExecution(view, statementRange, true);
+
+    expect(result.selectionOverlapsStatement).toBe(false);
+    expect(result.cursorRelocated).toBe(true);
+    expect(view.state.selection.main.from).toBe(statementRange.from);
+    expect(view.state.selection.main.to).toBe(statementRange.from);
+    expect(view.state.selection.main.empty).toBe(true);
+    expect(focusSpy).toHaveBeenCalledOnce();
+    view.destroy();
   });
 });
 

@@ -1,5 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
-import { createDataGridCellContextMenuItems, createDataGridColumnContextMenuItems, createDataGridCompactColumnActionItems, createDataGridFilterSubmenu, createDataGridRowContextMenuItems, createDataGridSortMenuItems, dataGridSelectedSortMenuValue } from "@/lib/dataGrid/dataGridContextMenu";
+import {
+  createDataGridCellContextMenuItems,
+  createDataGridColumnContextMenuItems,
+  createDataGridCompactColumnActionItems,
+  createDataGridFilterSubmenu,
+  createDataGridHighlightSubmenu,
+  createDataGridRowContextMenuItems,
+  createDataGridSortMenuItems,
+  dataGridSelectedSortMenuValue,
+} from "@/lib/dataGrid/dataGridContextMenu";
 
 const icon = {};
 
@@ -247,5 +256,126 @@ describe("dataGridContextMenu", () => {
     expect(hideIdentical).toBeDefined();
     expect(hideIdentical?.disabled).toBe(false);
     expect(showAll).toBeDefined();
+  });
+
+  it("builds a highlight submenu with checked states and clear action", () => {
+    const toggleDuplicates = vi.fn();
+    const toggleNulls = vi.fn();
+    const clear = vi.fn();
+
+    const submenu = createDataGridHighlightSubmenu({
+      label: "Highlight",
+      icon,
+      labels: {
+        duplicates: "Highlight Duplicates",
+        nulls: "Highlight NULL Values",
+        clear: "Clear Highlights",
+      },
+      hasDuplicatesActive: true,
+      hasNullsActive: false,
+      canClear: true,
+      toggleDuplicates,
+      toggleNulls,
+      clear,
+    });
+
+    expect(submenu.label).toBe("Highlight");
+    expect(submenu.children).toHaveLength(4);
+    expect(submenu.children?.[0]).toMatchObject({ label: "Highlight Duplicates", checked: true });
+    expect(submenu.children?.[1]).toMatchObject({ label: "Highlight NULL Values", checked: false });
+    expect(submenu.children?.[2]).toMatchObject({ separator: true });
+    expect(submenu.children?.[3]).toMatchObject({ label: "Clear Highlights", disabled: false });
+
+    submenu.children?.[0]?.action?.();
+    expect(toggleDuplicates).toHaveBeenCalledTimes(1);
+
+    submenu.children?.[1]?.action?.();
+    expect(toggleNulls).toHaveBeenCalledTimes(1);
+
+    submenu.children?.[3]?.action?.();
+    expect(clear).toHaveBeenCalledTimes(1);
+  });
+
+  it("includes highlight submenu in header and context column items", () => {
+    const action = vi.fn();
+    const filter = createDataGridFilterSubmenu({
+      label: "filter",
+      icon,
+      labels: { equals: "equals", notEquals: "not equals", like: "like", notLike: "not like", lessThan: "less", greaterThan: "greater", isNull: "null", isNotNull: "not null", clear: "clear" },
+      apply: action,
+      clear: action,
+    });
+    const highlightSubmenu = createDataGridHighlightSubmenu({
+      label: "highlight",
+      icon,
+      labels: { duplicates: "duplicates", nulls: "nulls", clear: "clear" },
+      toggleDuplicates: action,
+      toggleNulls: action,
+      clear: action,
+    });
+
+    const headerItems = createDataGridColumnContextMenuItems({
+      headerColumn: true,
+      contextColumn: false,
+      canCopyAlterSql: false,
+      canFilter: false,
+      hasSort: false,
+      sortMode: "database",
+      labels: {
+        copyName: "copy name",
+        copyNames: "copy names",
+        details: "details",
+        copyAlterSql: "alter",
+        databaseAscending: "db asc",
+        databaseDescending: "db desc",
+        localAscending: "local asc",
+        localDescending: "local desc",
+        clearSort: "clear sort",
+        freezeToColumn: "freeze",
+        freezeSelectedColumns: "freeze selected",
+        unfreezeColumns: "unfreeze",
+        hideColumn: "hide",
+        hideSelectedColumns: "hide selected",
+        showAllColumnsMenu: "show all",
+      },
+      icons: { copy: icon, columnDetails: icon, database: icon, ascending: icon, descending: icon, clearSort: icon },
+      actions: { copyName: action, copyNames: action, details: action, copyAlterSql: action, sort: action, freezeToColumn: action, freezeSelectedColumns: action, unfreezeColumns: action, hideColumn: action, hideSelectedColumns: action, showAllColumnsMenu: action },
+      filterSubmenu: filter,
+      highlightSubmenu,
+    });
+
+    expect(headerItems.map((item) => item.label)).toContain("highlight");
+
+    const cellItems = createDataGridColumnContextMenuItems({
+      headerColumn: false,
+      contextColumn: true,
+      canCopyAlterSql: false,
+      canFilter: true,
+      hasSort: false,
+      sortMode: "database",
+      labels: {
+        copyName: "copy name",
+        copyNames: "copy names",
+        details: "details",
+        copyAlterSql: "alter",
+        databaseAscending: "db asc",
+        databaseDescending: "db desc",
+        localAscending: "local asc",
+        localDescending: "local desc",
+        clearSort: "clear sort",
+        freezeToColumn: "freeze",
+        freezeSelectedColumns: "freeze selected",
+        unfreezeColumns: "unfreeze",
+        hideColumn: "hide",
+        hideSelectedColumns: "hide selected",
+        showAllColumnsMenu: "show all",
+      },
+      icons: { copy: icon, columnDetails: icon, database: icon, ascending: icon, descending: icon, clearSort: icon },
+      actions: { copyName: action, copyNames: action, details: action, copyAlterSql: action, sort: action, freezeToColumn: action, freezeSelectedColumns: action, unfreezeColumns: action, hideColumn: action, hideSelectedColumns: action, showAllColumnsMenu: action },
+      filterSubmenu: filter,
+      highlightSubmenu,
+    });
+
+    expect(cellItems.map((item) => item.label)).toContain("highlight");
   });
 });

@@ -4,7 +4,7 @@ import { uuid } from "@/lib/common/utils";
 import { useI18n } from "vue-i18n";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { buildTransferObjectSelections, countTransferObjects } from "./transferSelections";
+import { buildTransferObjectSelectionField, countTransferObjects } from "./transferSelections";
 import { createTaskLoadTracker } from "./taskLoadTracker";
 import { describeTransferStructureOperation, summarizeTransferStructureOperations } from "./structurePlanSummary";
 import {
@@ -31,7 +31,7 @@ import { ensureReadOnlyWriteAccess } from "@/lib/database/readOnlyWriteAccess";
 import { useProductionSafetyStore } from "@/stores/productionSafetyStore";
 import * as api from "@/lib/backend/api";
 import type { TransferContent, TransferObjectKind, TransferTableNameCase } from "@/lib/backend/api";
-import { crossFamilyTransferableKinds, isSameTransferFamily, transferObjectKindsForDatabase } from "@/lib/database/transferObjectKinds";
+import { crossFamilyTransferableKinds, isSameTransferFamily, isTransferPairSupported, transferObjectKindsForDatabase } from "@/lib/database/transferObjectKinds";
 import ObjectSelectionTree from "@/components/transfer/ObjectSelectionTree.vue";
 import TransferTaskTree from "@/components/transfer/TransferTaskTree.vue";
 import DataTransferProgressDialog from "@/components/transfer/DataTransferProgressDialog.vue";
@@ -49,7 +49,7 @@ import { openDataTransferTask } from "@/composables/useDialogSources";
 import { useTransferTaskStore, TransferTaskNameConflictError, nextTransferTaskCopyName } from "@/stores/transferTaskStore";
 import { useToast } from "@/composables/useToast";
 import type { CatalogInfo } from "@/types/database";
-import { ArrowRightLeft, ArrowLeftRight, Loader2 } from "@lucide/vue";
+import { ArrowRightLeft, ArrowLeftRight, Loader2, X } from "@lucide/vue";
 
 const { t } = useI18n();
 const { tasks, startDataTransferTask } = useExportTracker();
@@ -87,6 +87,14 @@ const transferDialogStyle = {
 const store = useConnectionStore();
 
 const sqlConnections = computed(() => store.connections.filter((c) => supportsTransfer(transferDatabaseTypeForConnection(c))));
+const sourceConnections = computed(() => {
+  const targetType = transferDatabaseTypeForConnection(store.getConfig(targetConnectionId.value));
+  return sqlConnections.value.filter((connection) => isTransferPairSupported(transferDatabaseTypeForConnection(connection), targetType));
+});
+const targetConnections = computed(() => {
+  const sourceType = transferDatabaseTypeForConnection(store.getConfig(sourceConnectionId.value));
+  return sqlConnections.value.filter((connection) => isTransferPairSupported(sourceType, transferDatabaseTypeForConnection(connection)));
+});
 
 // Source state
 const sourceConnectionId = ref("");
@@ -103,6 +111,7 @@ const loadingObjects = ref(false);
 const transferContent = ref<TransferContent>("structureAndData");
 
 const selectedTables = computed(() => new Set(selectedObjects.value.TABLE ?? []));
+const selectedTableList = computed(() => [...selectedTables.value]);
 
 const OBJECT_KIND_LABEL_KEY: Record<TransferObjectKind, string> = {
   TABLE: "objectTypeTable",
@@ -172,6 +181,8 @@ const pendingSelectedTablesPrefill = ref<string[] | null>(null);
 // Pending object selection for saved-task loading (covers all object kinds,
 // unlike the table-only dialog prefill used by sidebar entry points).
 const pendingSelectedObjectsPrefill = ref<Partial<Record<TransferObjectKind, string[]>> | null>(null);
+// Saved-task per-table filters, applied together with the object selection once the tree loads.
+const pendingTableFiltersPrefill = ref<Record<string, string> | null>(null);
 
 // Target state
 const targetConnectionId = ref("");
@@ -195,6 +206,11 @@ const targetTableNameCase = ref<TransferTableNameCase>("preserve");
 const quoteTargetColumnNames = ref(true);
 const batchSize = ref(1000);
 const showSqlPreviewConfirm = ref(false);
+// Per-source-table filter: table name -> bare WHERE predicate or full SELECT.
+const tableFilters = ref<Record<string, string>>({});
+const filterDialogOpen = ref(false);
+const filterEditingTable = ref("");
+const filterDraft = ref("");
 const isSubmitting = ref(false);
 const pendingTransferId = ref<string | null>(null);
 const showStartConfirm = ref(false);
@@ -226,14 +242,68 @@ function connectionType(id: string): DatabaseType | undefined {
   return store.connections.find((c) => c.id === id)?.db_type;
 }
 
+// Keep in sync with `transfer_table_filter_supported` in dbx-core.
+const tableFilterSupported = computed(() => {
+  const type = connectionType(sourceConnectionId.value);
+  return type === "mysql" || type === "gbase" || type === "postgres" || type === "kingbase" || type === "gaussdb" || type === "opengauss" || type === "kwdb";
+});
+
+const activeTableFilterCount = computed(() => selectedTableList.value.filter((table) => (tableFilters.value[table] ?? "").trim().length > 0).length);
+
+function openTableFilter(table: string) {
+  filterEditingTable.value = table;
+  filterDraft.value = tableFilters.value[table] ?? "";
+  filterDialogOpen.value = true;
+}
+
+function clearTableFilter(table: string) {
+  if (!(table in tableFilters.value)) return;
+  const next = { ...tableFilters.value };
+  delete next[table];
+  tableFilters.value = next;
+}
+
+function saveTableFilter() {
+  const table = filterEditingTable.value;
+  if (!table) return;
+  const value = filterDraft.value.trim();
+  if (value) tableFilters.value = { ...tableFilters.value, [table]: value };
+  else clearTableFilter(table);
+  filterDialogOpen.value = false;
+}
+
+/** Filters for currently selected tables only; undefined when there are none. */
+function requestedTableFilters(): Record<string, string> | undefined {
+  const entries = Object.entries(tableFilters.value).filter(([table, value]) => selectedTables.value.has(table) && value.trim().length > 0);
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
+const sourceTransferType = computed(() => transferDatabaseTypeForConnection(store.getConfig(sourceConnectionId.value)));
+const targetTransferType = computed(() => transferDatabaseTypeForConnection(store.getConfig(targetConnectionId.value)));
+const isXuguTransferPair = computed(() => sourceTransferType.value === "xugu" && targetTransferType.value === "xugu");
+// The table-name-case selector is hidden for Xugu pairs; reset any earlier choice so the
+// blocking xuguPreserveTableNames hint cannot strand the user without a visible control.
+watch(isXuguTransferPair, (isXuguPair) => {
+  if (isXuguPair) targetTableNameCase.value = "preserve";
+});
+const targetStrategyType = computed(() => (targetTransferType.value === "xugu" ? "xugu" : connectionType(targetConnectionId.value)));
+const xuguTransferHint = computed(() => {
+  if (sourceTransferType.value === "xugu" || targetTransferType.value === "xugu") {
+    if (!isTransferPairSupported(sourceTransferType.value, targetTransferType.value)) return t("transfer.xuguPairOnly");
+    if (targetTableStrategy.value === "upsert" || targetTableStrategy.value === "rebuild") return t("transfer.xuguAppendOverwriteOnly");
+    if (transferContent.value !== "dataOnly" && targetTableNameCase.value !== "preserve") return t("transfer.xuguPreserveTableNames");
+  }
+  return "";
+});
+
 function isMongoConnection(id: string): boolean {
   return connectionType(id) === "mongodb";
 }
 
 const showTargetColumnQuoteOption = computed(() => ["gaussdb", "opengauss"].includes(connectionType(targetConnectionId.value) ?? ""));
 
-const rebuildDisabledReason = computed(() => rebuildUnavailableReason(transferContent.value, connectionType(targetConnectionId.value)));
-const upsertSupported = computed(() => supportsTransferUpsert(connectionType(targetConnectionId.value)));
+const rebuildDisabledReason = computed(() => rebuildUnavailableReason(transferContent.value, targetStrategyType.value));
+const upsertSupported = computed(() => supportsTransferUpsert(targetStrategyType.value));
 const rebuildDisabledHint = computed(() => {
   if (rebuildDisabledReason.value === "dataOnly") return t("transfer.rebuildDataOnlyDisabled");
   if (rebuildDisabledReason.value === "unsupported") return t("transfer.rebuildUnsupportedDisabled");
@@ -273,6 +343,8 @@ const canStart = computed(() => {
   const sameSourceAndTarget = sameCatalogAndDatabase && effectiveSourceSchema === effectiveTargetSchema;
   return (
     !!sourceConnectionId.value &&
+    isTransferPairSupported(sourceTransferType.value, targetTransferType.value) &&
+    !xuguTransferHint.value &&
     isTransferDatabaseSelected(sourceDatabase.value) &&
     !!targetConnectionId.value &&
     isTransferDatabaseSelected(targetDatabase.value) &&
@@ -429,18 +501,30 @@ function applyPendingTableSelection() {
   pendingSelectedTablesPrefill.value = null;
 }
 
-/** Applies a saved task's object selection, dropping objects missing from the source. */
+/** Applies a saved task's object selection and per-table filters, dropping missing objects. */
 function applyPendingObjectSelection() {
   const pending = pendingSelectedObjectsPrefill.value;
-  if (!pending) return;
-  const next: Partial<Record<TransferObjectKind, Set<string>>> = { ...selectedObjects.value };
-  for (const [kind, names] of Object.entries(pending)) {
-    const available = objectGroups.value[kind as TransferObjectKind] ?? [];
-    const chosen = new Set(available.filter((name) => names.includes(name)));
-    if (chosen.size > 0) next[kind as TransferObjectKind] = chosen;
+  if (pending) {
+    const next: Partial<Record<TransferObjectKind, Set<string>>> = { ...selectedObjects.value };
+    for (const [kind, names] of Object.entries(pending)) {
+      const available = objectGroups.value[kind as TransferObjectKind] ?? [];
+      const chosen = new Set(available.filter((name) => names.includes(name)));
+      if (chosen.size > 0) next[kind as TransferObjectKind] = chosen;
+    }
+    selectedObjects.value = next;
+    pendingSelectedObjectsPrefill.value = null;
   }
-  selectedObjects.value = next;
-  pendingSelectedObjectsPrefill.value = null;
+
+  const restoredFilters = pendingTableFiltersPrefill.value;
+  if (restoredFilters) {
+    const available = new Set(objectGroups.value.TABLE ?? []);
+    const nextFilters: Record<string, string> = {};
+    for (const [table, value] of Object.entries(restoredFilters)) {
+      if (available.has(table) && value.trim().length > 0) nextFilters[table] = value;
+    }
+    tableFilters.value = nextFilters;
+    pendingTableFiltersPrefill.value = null;
+  }
 }
 
 async function loadObjects(isCancelled: () => boolean = () => false) {
@@ -516,6 +600,7 @@ watch(sourceConnectionId, async (id) => {
   sourceDatabase.value = "";
   objectGroups.value = {};
   selectedObjects.value = {};
+  tableFilters.value = {};
   pendingSourceSchemaPrefill.value = "";
   pendingSelectedTablesPrefill.value = null;
   if (isCatalogCapable(id)) {
@@ -539,6 +624,7 @@ watch(sourceCatalog, async (catalog) => {
   sourceDatabase.value = "";
   objectGroups.value = {};
   selectedObjects.value = {};
+  tableFilters.value = {};
   if (catalog) {
     await loadDatabasesForCatalog(sourceConnectionId.value, catalog, "source");
   }
@@ -549,6 +635,7 @@ watch(sourceDatabase, async (db) => {
     skipSourceDatabaseWatch.value = false;
     return;
   }
+  tableFilters.value = {};
   if (isTransferDatabaseSelected(db)) {
     const config = store.getConfig(sourceConnectionId.value);
     const database = sourceDatabaseName.value;
@@ -571,6 +658,7 @@ watch(sourceSchema, () => {
     skipSourceSchemaWatch.value = false;
     return;
   }
+  tableFilters.value = {};
   loadObjects();
 });
 
@@ -703,7 +791,12 @@ function resetState(cancelTaskLoad = true) {
   targetTableNameCase.value = "preserve";
   quoteTargetColumnNames.value = true;
   batchSize.value = 1000;
+  tableFilters.value = {};
+  filterDialogOpen.value = false;
+  filterEditingTable.value = "";
+  filterDraft.value = "";
   pendingSelectedObjectsPrefill.value = null;
+  pendingTableFiltersPrefill.value = null;
   activeTaskId.value = null;
   savedConfigSnapshot.value = "";
 }
@@ -786,6 +879,7 @@ function swapSourceAndTarget() {
   // 对象树始终跟随源端：新源端是旧目标端，旧选择已无意义，清空后重新加载
   objectGroups.value = {};
   selectedObjects.value = {};
+  tableFilters.value = {};
   objectSearch.value = "";
   void loadObjects();
 }
@@ -812,12 +906,13 @@ async function requestStartTransfer() {
     tables: [...selectedTables.value],
     createTable: transferContent.value !== "dataOnly",
     content: transferContent.value,
-    objects: buildTransferObjectSelections(selectedObjects.value, treeDisabledGroups.value),
+    ...buildTransferObjectSelectionField(selectedObjects.value, treeDisabledGroups.value),
     ...transferStrategyOptions(targetTableStrategy.value),
     targetTableNameCase: targetTableNameCase.value,
     quoteTargetColumnNames: quoteTargetColumnNames.value,
     ownershipPolicy: "preserve",
     batchSize: batchSize.value,
+    tableFilters: requestedTableFilters(),
     dropTargetConfirmed: false,
   };
   pendingTransferId.value = request.transferId;
@@ -899,6 +994,7 @@ function currentConfig(): TransferTaskConfig {
     targetTableNameCase: targetTableNameCase.value,
     quoteTargetColumnNames: quoteTargetColumnNames.value,
     batchSize: batchSize.value,
+    tableFilters: requestedTableFilters(),
     dropTargetConfirmed: false,
   };
 }
@@ -909,7 +1005,8 @@ function configSnapshot(config: TransferTaskConfig) {
   for (const kind of Object.keys(config.objects).sort()) {
     orderedObjects[kind] = [...(config.objects[kind as TransferObjectKind] ?? [])].sort();
   }
-  return JSON.stringify({ ...config, objects: orderedObjects });
+  const orderedFilters = Object.fromEntries(Object.entries(config.tableFilters ?? {}).sort(([a], [b]) => a.localeCompare(b)));
+  return JSON.stringify({ ...config, objects: orderedObjects, tableFilters: orderedFilters });
 }
 
 const formHasContent = computed(() => !!sourceConnectionId.value || !!targetConnectionId.value);
@@ -951,6 +1048,7 @@ async function loadTaskIntoForm(task: TransferTask) {
   quoteTargetColumnNames.value = config.quoteTargetColumnNames;
   batchSize.value = config.batchSize;
   pendingSelectedObjectsPrefill.value = Object.keys(config.objects).length > 0 ? JSON.parse(JSON.stringify(config.objects)) : null;
+  pendingTableFiltersPrefill.value = config.tableFilters && Object.keys(config.tableFilters).length > 0 ? { ...config.tableFilters } : null;
 
   skipSourceWatch.value = true;
   sourceConnectionId.value = config.sourceConnectionId;
@@ -1269,7 +1367,7 @@ async function saveConfigTask() {
                   <Label class="text-xs">{{ t("transfer.sourceConnection") }}</Label>
                   <ConnectionTreeSelect
                     v-model="sourceConnectionId"
-                    :connections="sqlConnections"
+                    :connections="sourceConnections"
                     :layout="store.sidebarLayout"
                     :placeholder="t('transfer.selectConnection')"
                     :search-placeholder="t('transfer.searchConnection')"
@@ -1342,7 +1440,7 @@ async function saveConfigTask() {
                   <Label class="text-xs">{{ t("transfer.targetConnection") }}</Label>
                   <ConnectionTreeSelect
                     v-model="targetConnectionId"
-                    :connections="sqlConnections"
+                    :connections="targetConnections"
                     :layout="store.sidebarLayout"
                     :placeholder="t('transfer.selectConnection')"
                     :search-placeholder="t('transfer.searchConnection')"
@@ -1412,6 +1510,30 @@ async function saveConfigTask() {
                 {{ t("transfer.selectSourceFirst") }}
               </div>
               <ObjectSelectionTree v-model="treeSelection" :groups="treeGroups" :disabled-groups="treeDisabledGroups" :disabled-hints="treeDisabledHints" :qualifiers="objectQualifiers" v-model:search="objectSearch" :loading="loadingObjects" class="min-h-0 flex-1" />
+              <!-- Per-table SQL filters (MySQL / PostgreSQL sources) -->
+              <div v-if="tableFilterSupported && transferContent !== 'structureOnly' && selectedTableList.length" class="shrink-0 rounded-lg border border-border/60 bg-card/60 p-1.5">
+                <div class="flex items-center justify-between gap-2 px-1 pb-1">
+                  <span class="text-xs font-medium text-muted-foreground">
+                    {{ t("transfer.tableFilterSection") }}
+                    <span v-if="activeTableFilterCount" class="text-primary">({{ activeTableFilterCount }})</span>
+                  </span>
+                  <span class="text-[11px] text-muted-foreground/70">{{ t("transfer.tableFilterSectionHint") }}</span>
+                </div>
+                <div class="max-h-24 space-y-0.5 overflow-auto">
+                  <div v-for="name in selectedTableList" :key="name" class="flex items-center gap-1.5 rounded px-1.5 py-1 text-xs hover:bg-muted/60">
+                    <span class="min-w-0 flex-1 truncate" :title="name">{{ name }}</span>
+                    <span v-if="tableFilters[name]" class="max-w-[45%] truncate rounded bg-primary/10 px-1 text-[11px] text-primary" :title="tableFilters[name]">
+                      {{ tableFilters[name] }}
+                    </span>
+                    <Button variant="ghost" size="sm" class="h-6 shrink-0 px-1.5 text-[11px]" @click="openTableFilter(name)">
+                      {{ tableFilters[name] ? t("transfer.tableFilterEdit") : t("transfer.tableFilterSet") }}
+                    </Button>
+                    <Button v-if="tableFilters[name]" variant="ghost" size="icon" class="h-6 w-6 shrink-0" :title="t('transfer.tableFilterClear')" :aria-label="t('transfer.tableFilterClear')" @click="clearTableFilter(name)">
+                      <X class="h-3 w-3" />
+                    </Button>
+                  </div>
+                </div>
+              </div>
               <div v-if="showCrossFamilyViewHint" class="mt-1.5 rounded-md border border-amber-300/40 bg-amber-50 px-2 py-1.5 text-xs text-amber-700">
                 {{ t("transfer.crossFamilyViewHint") }}
               </div>
@@ -1453,7 +1575,8 @@ async function saveConfigTask() {
                 </Select>
               </div>
               <p v-if="rebuildDisabledHint" class="text-xs text-muted-foreground">{{ rebuildDisabledHint }}</p>
-              <div class="flex items-center gap-3">
+              <p v-if="xuguTransferHint" class="text-xs text-amber-600">{{ xuguTransferHint }}</p>
+              <div v-if="!isXuguTransferPair" class="flex items-center gap-3">
                 <Label class="text-xs shrink-0">{{ t("transfer.targetTableNameCase") }}</Label>
                 <Select v-model="targetTableNameCase">
                   <SelectTrigger class="h-7 text-xs">
@@ -1562,6 +1685,40 @@ async function saveConfigTask() {
         <Button size="sm" @click="resolveOwnershipDecision('reassignMissing')">
           {{ t("transfer.ownershipConfirm") }}
         </Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
+
+  <Dialog v-model:open="filterDialogOpen">
+    <DialogContent class="sm:max-w-[560px]" @interact-outside.prevent>
+      <DialogHeader>
+        <DialogTitle>{{ t("transfer.tableFilterTitle", { table: filterEditingTable }) }}</DialogTitle>
+        <DialogDescription>{{ t("transfer.tableFilterHint") }}</DialogDescription>
+      </DialogHeader>
+      <textarea
+        v-model="filterDraft"
+        rows="5"
+        spellcheck="false"
+        class="w-full rounded-md border border-input bg-transparent px-2 py-1.5 font-mono text-xs shadow-none outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+        :placeholder="t('transfer.tableFilterPlaceholder')"
+      ></textarea>
+      <p class="text-xs text-muted-foreground">{{ t("transfer.tableFilterExamples") }}</p>
+      <DialogFooter class="gap-2">
+        <Button variant="outline" size="sm" @click="filterDialogOpen = false">
+          {{ t("transfer.cancel") }}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          :disabled="!tableFilters[filterEditingTable]"
+          @click="
+            clearTableFilter(filterEditingTable);
+            filterDialogOpen = false;
+          "
+        >
+          {{ t("transfer.tableFilterClear") }}
+        </Button>
+        <Button size="sm" @click="saveTableFilter">{{ t("transfer.tableFilterSave") }}</Button>
       </DialogFooter>
     </DialogContent>
   </Dialog>
